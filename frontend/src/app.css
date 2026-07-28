@@ -1,0 +1,153 @@
+@import "tailwindcss";
+
+/* Match Open WebUI's own gray scale exactly (src/tailwind.css) so dark: variants
+   copied verbatim from its components render with the same tone. */
+@theme {
+  --color-gray-50: oklch(0.98 0 0);
+  --color-gray-100: oklch(0.94 0 0);
+  --color-gray-200: oklch(0.92 0 0);
+  --color-gray-300: oklch(0.85 0 0);
+  --color-gray-400: oklch(0.77 0 0);
+  --color-gray-500: oklch(0.69 0 0);
+  --color-gray-600: oklch(0.51 0 0);
+  --color-gray-700: oklch(0.42 0 0);
+  --color-gray-800: oklch(0.32 0 0);
+  --color-gray-850: oklch(0.27 0 0);
+  --color-gray-900: oklch(0.2 0 0);
+  --color-gray-950: oklch(0.16 0 0);
+}
+
+/* A grayscale palette matching Open WebUI's own look (see open-webui/src/tailwind.css) */
+:root {
+  --owui-gray-50: oklch(0.98 0 0);
+  --owui-gray-100: oklch(0.94 0 0);
+  --owui-gray-200: oklch(0.92 0 0);
+  --owui-gray-300: oklch(0.85 0 0);
+  --owui-gray-400: oklch(0.77 0 0);
+  --owui-gray-500: oklch(0.69 0 0);
+  --owui-gray-600: oklch(0.51 0 0);
+  --owui-gray-700: oklch(0.42 0 0);
+  --owui-gray-800: oklch(0.32 0 0);
+  --owui-gray-850: oklch(0.27 0 0);
+  --owui-gray-900: oklch(0.2 0 0);
+  --owui-gray-950: oklch(0.16 0 0);
+
+  --owui-bg: #fff;
+  --owui-bg-secondary: var(--owui-gray-50);
+  --owui-text: var(--owui-gray-900);
+  --owui-text-muted: var(--owui-gray-600);
+  --owui-border: var(--owui-gray-200);
+  --owui-accent: #000;
+  --owui-accent-text: #fff;
+  --owui-danger: #dc2626;
+  --owui-success: #16a34a;
+  --owui-warning: #ca8a04;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --owui-bg: #000;
+    --owui-bg-secondary: var(--owui-gray-900);
+    --owui-text: var(--owui-gray-100);
+    --owui-text-muted: var(--owui-gray-400);
+    --owui-border: var(--owui-gray-800);
+    --owui-accent: #fff;
+    --owui-accent-text: #000;
+    --owui-danger: #f87171;
+    --owui-success: #4ade80;
+    --owui-warning: #facc15;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    system-ui,
+    sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--owui-text);
+  background: var(--owui-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  color: var(--owui-text);
+  background: var(--owui-bg-secondary);
+  border: 1px solid var(--owui-border);
+  border-radius: 0.65rem;
+  padding: 0.5rem 0.9rem;
+  transition:
+    background 0.15s ease,
+    opacity 0.15s ease;
+}
+
+button:hover:not(:disabled) {
+  background: var(--owui-border);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--owui-accent);
+  color: var(--owui-accent-text);
+  border-color: var(--owui-accent);
+  font-weight: 500;
+}
+
+button.primary:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--owui-text);
+  background: var(--owui-bg-secondary);
+  border: 1px solid var(--owui-border);
+  border-radius: 0.65rem;
+}
+
+code {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  background: var(--owui-bg-secondary);
+  border-radius: 0.35rem;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.85em;
+}
+
+.original-text {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 0.85rem 1rem;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  color: var(--owui-text-muted);
+}
