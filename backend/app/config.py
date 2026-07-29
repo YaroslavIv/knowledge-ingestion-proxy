@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     # need PROXY_PROXY_API_KEY to be set, which is not what anyone would type.
     api_key: str = ""
 
+    # A second, independent gate: instead of (or alongside) the static
+    # api_key above, require every caller's Authorization header to be a
+    # real, currently-valid Open WebUI credential (session JWT or `sk-...`
+    # API key) — checked live against this same Open WebUI instance's own
+    # GET /api/v1/auths/ ("who am I") endpoint on every request. Left off by
+    # default, same reasoning as api_key: existing deployments and the test
+    # suite must not suddenly need a live Open WebUI reachable just to boot.
+    require_owui_auth: bool = False
+
     db_path: str = str(_DATA_DIR / "ingestion_proxy.db")
     # Where original file bytes are cached locally so an already-committed
     # document's "existing file" pane can show the real original (Open WebUI

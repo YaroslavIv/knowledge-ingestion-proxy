@@ -11,8 +11,8 @@ from app.config import settings
 from app.db import AsyncSessionLocal, init_db
 from app.models import IngestionSession, OwuiConnection
 from app.original_storage import purge_orphaned
-from app.routers import ask, connections, courses, documents, kb, preview, tags
-from app.security import require_api_key
+from app.routers import ask, auth, connections, courses, documents, kb, preview, tags
+from app.security import require_api_key, require_owui_bearer
 
 log = logging.getLogger(__name__)
 
@@ -77,10 +77,12 @@ app.add_middleware(
     expose_headers=["X-Original-Filename", "X-Original-Source"],
 )
 
-# /api/health stays open (monitoring/health checks) by simply not being
-# part of any of these routers — every real API route requires the key
-# once PROXY_API_KEY is set.
-_auth = [Depends(require_api_key)]
+# /api/health and /api/auth/login stay open (health for monitoring; login is
+# the front door itself — a caller with no token yet is exactly who needs to
+# reach it) by simply not being part of any of these routers — every real
+# API route requires the key once PROXY_API_KEY is set.
+_auth = [Depends(require_api_key), Depends(require_owui_bearer)]
+app.include_router(auth.router)
 app.include_router(ask.router, dependencies=_auth)
 app.include_router(connections.router, dependencies=_auth)
 app.include_router(courses.router, dependencies=_auth)

@@ -3,14 +3,19 @@
   import ConnectionSwitcher from "./lib/ConnectionSwitcher.svelte";
   import CourseDetail from "./lib/CourseDetail.svelte";
   import Courses from "./lib/Courses.svelte";
-  import { getActiveConnection, getCourseProject, getKnowledgeBaseDetail } from "./lib/api.js";
+  import { clearToken, getActiveConnection, getCourseProject, getKnowledgeBaseDetail, getToken } from "./lib/api.js";
   import Knowledge from "./lib/Knowledge.svelte";
   import KnowledgeDetail from "./lib/KnowledgeDetail.svelte";
+  import Login from "./lib/Login.svelte";
   import { buildPath, parseRoute } from "./lib/router.js";
 
   let section = $state("knowledge"); // "knowledge" | "courses"
   let openKnowledge = $state(null); // { id, name, fileId } | null
   let openCourseProjectId = $state(null);
+  // Personal login (this browser's own Open WebUI account) gates everything
+  // below it — distinct from activeConnection, which is this whole
+  // deployment's shared "which Open WebUI instance" admin setting.
+  let loggedIn = $state(!!getToken());
   let activeConnection = $state(undefined); // undefined = still loading, null = none, summary = connected
   let checkError = $state(null);
 
@@ -23,7 +28,17 @@
     }
   }
 
-  loadActiveConnection();
+  if (getToken()) loadActiveConnection();
+
+  function handleLoggedIn() {
+    loggedIn = true;
+    loadActiveConnection();
+  }
+
+  function handleLogout() {
+    clearToken();
+    window.location.reload();
+  }
 
   function handleSwitched(summary) {
     activeConnection = summary;
@@ -101,12 +116,25 @@
         knowledge base.
       </p>
     </div>
-    {#if activeConnection}
-      <ConnectionSwitcher active={activeConnection} onSwitched={handleSwitched} />
+    {#if loggedIn}
+      <div class="flex items-center gap-2">
+        {#if activeConnection}
+          <ConnectionSwitcher active={activeConnection} onSwitched={handleSwitched} />
+        {/if}
+        <button
+          type="button"
+          class="text-xs px-3 py-1.5 rounded-xl border border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-850"
+          onclick={handleLogout}
+        >
+          Log out
+        </button>
+      </div>
     {/if}
   </header>
 
-  {#if activeConnection === undefined}
+  {#if !loggedIn}
+    <Login onLoggedIn={handleLoggedIn} />
+  {:else if activeConnection === undefined}
     <div class="text-sm text-gray-500 text-center mt-12">Loading…</div>
   {:else if activeConnection === null}
     <Connect onConnected={(summary) => (activeConnection = summary)} />

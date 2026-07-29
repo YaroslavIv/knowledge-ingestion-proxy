@@ -12,6 +12,13 @@ settings.owui_api_key = "testkey"
 # that setting existed. Tests exercising the gate itself override this
 # per-test via monkeypatch (see test_security.py).
 settings.api_key = ""
+# Same reasoning — a machine running these tests may have a real backend/.env
+# with PROXY_REQUIRE_OWUI_AUTH=true (needed for that machine's actual
+# deployment), which would otherwise make every route in this suite require
+# a live, respx-mocked Open WebUI token it doesn't expect. Tests exercising
+# this gate itself override it per-test via monkeypatch (see test_security.py,
+# test_login.py).
+settings.require_owui_auth = False
 
 
 @pytest.fixture(scope="session")

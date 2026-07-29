@@ -1,6 +1,7 @@
 <script>
   import {
     approveCourseModule,
+    authHeaders,
     bumpOutputVersion,
     createCourseModule,
     deleteCourseModule,
@@ -310,6 +311,32 @@
       } catch (e) {
         error = e.message;
       }
+    }
+  }
+
+  // getModuleOutputViewUrl/getModuleOutputDownloadUrl point straight at the
+  // backend — a plain <a href> navigation to them can't carry the
+  // Authorization header, so once PROXY_REQUIRE_OWUI_AUTH is on they'd just
+  // 401. Fetch with the header instead and hand the browser a blob URL,
+  // same approach KnowledgeDetail.svelte already uses for the PDF preview.
+  async function openModuleOutputFile(url, downloadFilename = null) {
+    try {
+      const resp = await fetch(url, { headers: authHeaders() });
+      if (!resp.ok) throw new Error(`Failed to fetch (${resp.status})`);
+      const blobUrl = URL.createObjectURL(await resp.blob());
+      if (downloadFilename) {
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = downloadFilename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } else {
+        window.open(blobUrl, "_blank", "noopener,noreferrer");
+      }
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+    } catch (e) {
+      error = e.message;
     }
   }
 
@@ -725,13 +752,21 @@
                   <span class="text-gray-500 truncate flex-1">{v.filename}</span>
                   <span class="text-gray-400">{Math.round(v.size / 1024)} KB</span>
                   {#if v.has_html}
-                    <a class="underline text-gray-500 hover:text-gray-800 dark:hover:text-gray-200" href={getModuleOutputViewUrl(projectId, m.id, v.id)} target="_blank" rel="noopener noreferrer">
+                    <button
+                      type="button"
+                      class="underline text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"
+                      onclick={() => openModuleOutputFile(getModuleOutputViewUrl(projectId, m.id, v.id))}
+                    >
                       View
-                    </a>
+                    </button>
                   {/if}
-                  <a class="underline text-gray-500 hover:text-gray-800 dark:hover:text-gray-200" href={getModuleOutputDownloadUrl(projectId, m.id, v.id)} download>
+                  <button
+                    type="button"
+                    class="underline text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"
+                    onclick={() => openModuleOutputFile(getModuleOutputDownloadUrl(projectId, m.id, v.id), v.filename)}
+                  >
                     Download
-                  </a>
+                  </button>
                   {#if v.has_html && vi + 1 < (versionsByModule[m.id] ?? []).length && versionsByModule[m.id][vi + 1].has_html}
                     <button
                       type="button"

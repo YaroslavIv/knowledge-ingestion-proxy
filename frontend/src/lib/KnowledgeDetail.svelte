@@ -1,5 +1,6 @@
 <script>
   import {
+    authHeaders,
     cloneKnowledgeBase,
     deleteKnowledgeBase,
     deleteKnowledgeFile,
@@ -285,7 +286,7 @@
     fileOriginalFilename = file.filename;
 
     try {
-      const resp = await fetch(getKnowledgeFileOriginalUrl(knowledgeId, file.id));
+      const resp = await fetch(getKnowledgeFileOriginalUrl(knowledgeId, file.id), { headers: authHeaders() });
       if (!resp.ok) throw new Error(`Open WebUI returned ${resp.status}`);
       const contentType = resp.headers.get("content-type") || "";
       const rawFilename = resp.headers.get("x-original-filename");

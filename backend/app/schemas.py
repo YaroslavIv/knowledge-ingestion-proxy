@@ -3,6 +3,16 @@ from pydantic import BaseModel
 from app.redaction import Redaction
 
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    token: str
+    email: str
+
+
 class DocumentCreatedResponse(BaseModel):
     session_id: str
     filename: str

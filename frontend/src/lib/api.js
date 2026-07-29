@@ -1,13 +1,69 @@
 const BASE_URL = import.meta.env.VITE_PROXY_API_BASE_URL || "http://localhost:8123";
-// Compatible with Open WebUI's own convention (Authorization: Bearer <key>).
-// Left unset, no header is sent — matches the backend's PROXY_API_KEY being
-// unset by default (API open, same as before this existed).
-const API_KEY = import.meta.env.VITE_PROXY_API_KEY || "";
+
+// The proxy's own front door: a *personal* Open WebUI bearer token (an
+// sk-... API key from that person's own Settings -> Account -> API Keys),
+// entered once through the Login screen and cached per-browser here —
+// deliberately NOT baked into the build like an earlier version of this file
+// did, since that meant anyone who merely loaded the page already had a
+// working key with no login at all. Cleared automatically on a 401 (see
+// request() below) so an expired/revoked key reliably drops back to Login
+// instead of leaving the app stuck showing failed requests.
+const TOKEN_KEY = "proxy_owui_token";
+
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY) || "";
+}
+
+export function setToken(token) {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearToken() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+// For the handful of call sites that fetch a file directly (to inspect its
+// content-type, or build a Blob/object URL for a preview or download) instead
+// of going through request() below — they still need the same bearer token.
+export function authHeaders() {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+// Used by the Login screen: signs in against this deployment's own Open
+// WebUI instance (see backend/app/routers/auth.py) and, on success, caches
+// the returned personal token. Deliberately a plain fetch, not request() —
+// a wrong password here is a normal 401 that should surface as an inline
+// form error, not trigger request()'s global "drop the token and reload"
+// handling (there's no token to drop yet, and reloading would just wipe out
+// the error message the user needs to see).
+export async function login(email, password) {
+  const resp = await fetch(`${BASE_URL}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  let body = null;
+  try {
+    body = await resp.json();
+  } catch {
+    // ignore, body stays null
+  }
+  if (!resp.ok) throw new Error(body?.detail || resp.statusText);
+  setToken(body.token);
+  return body;
+}
 
 async function request(path, options = {}) {
-  const headers = { ...(options.headers || {}) };
-  if (API_KEY) headers.Authorization = `Bearer ${API_KEY}`;
+  const headers = { ...(options.headers || {}), ...authHeaders() };
   const resp = await fetch(`${BASE_URL}${path}`, { ...options, headers });
+  if (resp.status === 401) {
+    // The stored token stopped working (revoked/expired/never valid) —
+    // drop it and reload, which re-shows Login instead of leaving the rest
+    // of the app stuck mid-render with a wall of failed requests.
+    clearToken();
+    window.location.reload();
+  }
   if (!resp.ok) {
     let detail = resp.statusText;
     try {
