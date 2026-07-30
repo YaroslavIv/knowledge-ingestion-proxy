@@ -148,6 +148,10 @@ export function listAllTags() {
   return request("/api/tags");
 }
 
+export function getLatestCollectionsByTag(tag) {
+  return request(`/api/tags/${encodeURIComponent(tag)}/collections`);
+}
+
 export function updateCollectionTags(knowledgeId, tags) {
   return request(`/api/kb/${knowledgeId}/tags`, {
     method: "PATCH",

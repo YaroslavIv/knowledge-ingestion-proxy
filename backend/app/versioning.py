@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import TrackedCollection, TrackedFile
+from app.owui_client import OwuiClient
 
 _TRAILING_VERSION_RE = re.compile(r"(\d+)\.(\d+)$")
 
@@ -71,6 +72,49 @@ async def count_changed_files(db: AsyncSession, knowledge_id: str, current_versi
     rows = (await db.execute(select(TrackedFile).where(TrackedFile.knowledge_id == knowledge_id))).scalars().all()
     changed = sum(1 for row in rows if row.version_tag == current_version_tag)
     return changed, len(rows)
+
+
+async def _latest_tracked_collections_by_tag(
+    db: AsyncSession, existing_ids: set[str], tag: str
+) -> list[TrackedCollection]:
+    """Every tracked collection tagged `tag` that still exists in Open WebUI,
+    collapsed down to just the newest in each clone lineage — e.g. if a
+    "coe"-tagged collection was cloned into a newer "coe"-tagged version
+    (parent_knowledge_id chain), only that newer one is returned.
+    Independent collections that happen to share the tag without being
+    clones of one another are all kept.
+
+    A tagged collection whose parent is ALSO tagged gets dropped in favor of
+    the parent's (or further descendant's) more recent copy; a tagged
+    collection is only kept when nothing else in this same tagged set names
+    it as a parent.
+    """
+    rows = (await db.execute(select(TrackedCollection))).scalars().all()
+    tagged = [row for row in rows if tag in (row.tags or []) and row.knowledge_id in existing_ids]
+    tagged_ids = {row.knowledge_id for row in tagged}
+    superseded = {row.parent_knowledge_id for row in tagged if row.parent_knowledge_id in tagged_ids}
+    return [row for row in tagged if row.knowledge_id not in superseded]
+
+
+async def resolve_collection_ids_by_tag(db: AsyncSession, client: OwuiClient, tag: str) -> list[str]:
+    existing_ids = {item["id"] for item in await client.list_knowledge_bases()}
+    rows = await _latest_tracked_collections_by_tag(db, existing_ids, tag)
+    return [row.knowledge_id for row in rows]
+
+
+async def list_latest_by_tag(db: AsyncSession, client: OwuiClient, tag: str) -> list[dict]:
+    """Same collapsing as resolve_collection_ids_by_tag, but with each
+    collection's display name attached (for a tag-scoped table/listing UI,
+    where a bare id isn't enough) — the name only lives on Open WebUI's own
+    knowledge-base object, not in our tracked-collection row.
+    """
+    items = await client.list_knowledge_bases()
+    items_by_id = {item["id"]: item for item in items}
+    rows = await _latest_tracked_collections_by_tag(db, set(items_by_id), tag)
+    return [
+        {"id": row.knowledge_id, "name": items_by_id[row.knowledge_id]["name"], "version_tag": row.version_tag}
+        for row in rows
+    ]
 
 
 async def bump_file_version(db: AsyncSession, file_id: str, knowledge_id: str, method: str) -> TrackedFile:

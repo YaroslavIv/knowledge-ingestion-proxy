@@ -5,6 +5,7 @@ describe("parseRoute", () => {
   it("parses a bare section path", () => {
     expect(parseRoute("/knowledge")).toEqual({ section: "knowledge", id: null });
     expect(parseRoute("/courses")).toEqual({ section: "courses", id: null });
+    expect(parseRoute("/coe")).toEqual({ section: "coe", id: null });
   });
 
   it("parses a section path with an id", () => {

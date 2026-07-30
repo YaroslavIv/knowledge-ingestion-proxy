@@ -1,4 +1,5 @@
 <script>
+  import CoE from "./lib/CoE.svelte";
   import Connect from "./lib/Connect.svelte";
   import ConnectionSwitcher from "./lib/ConnectionSwitcher.svelte";
   import CourseDetail from "./lib/CourseDetail.svelte";
@@ -71,6 +72,9 @@
     if (s === "courses") {
       openKnowledge = null;
       openCourseProjectId = id;
+    } else if (s === "coe") {
+      openKnowledge = null;
+      openCourseProjectId = null;
     } else {
       openCourseProjectId = null;
       if (id) {
@@ -100,7 +104,8 @@
   window.addEventListener("popstate", () => applyPathToState(window.location.pathname));
 
   $effect(() => {
-    const path = buildPath(section, section === "knowledge" ? openKnowledge?.id ?? null : openCourseProjectId);
+    const id = section === "knowledge" ? (openKnowledge?.id ?? null) : section === "courses" ? openCourseProjectId : null;
+    const path = buildPath(section, id);
     if (window.location.pathname !== path) {
       window.history.pushState({}, "", path);
     }
@@ -159,6 +164,15 @@
         >
           Courses
         </button>
+        <button
+          type="button"
+          class="text-xs px-3 py-1.5 rounded-xl border transition {section === 'coe'
+            ? 'bg-black text-white dark:bg-white dark:text-black border-transparent'
+            : 'border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-850'}"
+          onclick={() => switchSection("coe")}
+        >
+          CoE
+        </button>
       </nav>
 
       {#if section === "knowledge"}
@@ -175,6 +189,8 @@
         {:else}
           <Knowledge onOpen={(kb) => (openKnowledge = { id: kb.id, name: kb.name })} />
         {/if}
+      {:else if section === "coe"}
+        <CoE onOpenKnowledge={openKnowledgeCollection} />
       {:else if openCourseProjectId}
         {#key openCourseProjectId}
           <CourseDetail projectId={openCourseProjectId} onBack={() => (openCourseProjectId = null)} onOpenKnowledgeCollection={openKnowledgeCollection} />

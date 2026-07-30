@@ -74,3 +74,42 @@ async def test_ask_joint_endpoint_returns_owuis_raw_shape_unmodified(client):
         {"type": "collection", "id": "kb-a"},
         {"type": "collection", "id": "kb-b"},
     ]
+
+
+@respx.mock
+async def test_ask_joint_passes_history_before_the_current_query(client):
+    chat_route = respx.post("http://fake-owui.test/api/v1/chat/completions").mock(
+        return_value=Response(200, json=RAW_COMPLETION)
+    )
+    resp = await client.post(
+        "/api/ask/joint",
+        json={
+            "collection_ids": ["kb-a"],
+            "query": "and what about pricing?",
+            "model": "gpt-5.4",
+            "history": [
+                {"role": "user", "content": "what is SecurOS Auto?"},
+                {"role": "assistant", "content": "it's a module for..."},
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    sent_body = json.loads(chat_route.calls[0].request.content)
+    assert sent_body["messages"] == [
+        {"role": "user", "content": "what is SecurOS Auto?"},
+        {"role": "assistant", "content": "it's a module for..."},
+        {"role": "user", "content": "and what about pricing?"},
+    ]
+
+
+@respx.mock
+async def test_ask_route_defaults_to_no_history(client):
+    respx.post("http://fake-owui.test/api/v1/retrieval/query/collection").mock(
+        return_value=Response(200, json={"documents": [["a"]], "distances": [[0.5]], "metadatas": [[{}]]})
+    )
+    chat_route = respx.post("http://fake-owui.test/api/v1/chat/completions").mock(
+        return_value=Response(200, json=RAW_COMPLETION)
+    )
+    await client.post("/api/ask/route", json={"collection_ids": ["kb-a"], "query": "q", "model": "gpt-5.4"})
+    sent_body = json.loads(chat_route.calls[0].request.content)
+    assert sent_body["messages"] == [{"role": "user", "content": "q"}]

@@ -173,6 +173,12 @@ class ChunkPreviewRequest(BaseModel):
     chunk_overlap: int | None = None
 
 
+class TaggedCollectionSummary(BaseModel):
+    id: str
+    name: str
+    version_tag: str
+
+
 class ModelSummary(BaseModel):
     id: str
     name: str | None = None
@@ -290,14 +296,30 @@ class ModuleOutputContentResponse(BaseModel):
     content: str
 
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
 class AskRoutedRequest(BaseModel):
-    collection_ids: list[str]
+    # Exactly one of these two must be given — either an explicit list, or a
+    # tag name whose latest-per-lineage collections get resolved server-side
+    # (see app/versioning.py's resolve_collection_ids_by_tag).
+    collection_ids: list[str] = []
+    tag: str | None = None
     query: str
     model: str
     k: int = 3
+    # Prior turns, oldest first — same shape as Open WebUI's own /api/chat/
+    # completions `messages` array, minus the current question (that's
+    # `query` above). Only feeds the actual answer, not the collection-
+    # routing/scoring step — see ask_with_routing.
+    history: list[ChatMessage] = []
 
 
 class AskJointRequest(BaseModel):
-    collection_ids: list[str]
+    collection_ids: list[str] = []
+    tag: str | None = None
     query: str
     model: str
+    history: list[ChatMessage] = []

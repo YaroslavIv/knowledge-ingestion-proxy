@@ -22,6 +22,7 @@ async def ask_with_routing(
     collection_ids: list[str],
     query: str,
     k: int = 3,
+    history: list[dict] | None = None,
 ) -> dict:
     """Returns Open WebUI's own raw chat-completion response (same shape as
     calling /api/chat/completions with `files` directly — `choices`,
@@ -29,6 +30,14 @@ async def ask_with_routing(
     two extra top-level fields: `winning_collection_id` and
     `collection_scores` (every candidate's best/highest score, or None if
     it returned nothing) — so the caller can see why that collection won.
+
+    `history` is prior turns (`[{"role": "user"/"assistant", "content": ...},
+    ...]`, oldest first) — prepended to the actual chat-completion call so a
+    follow-up question keeps conversational context, same as calling
+    /api/chat/completions with a multi-message `messages` array directly.
+    Routing/scoring itself still only looks at the current `query`, not the
+    whole history — which collection is the best match for *this* question
+    shouldn't be diluted by earlier unrelated turns.
 
     The `distances` field in query/collection's response is, despite the
     name, a similarity score — confirmed empirically against a real
@@ -51,20 +60,23 @@ async def ask_with_routing(
 
     raw = await client.chat_completion(
         model=model,
-        messages=[{"role": "user", "content": query}],
+        messages=[*(history or []), {"role": "user", "content": query}],
         files=[{"type": "collection", "id": winning_collection_id}],
         return_raw=True,
     )
     return {**raw, "winning_collection_id": winning_collection_id, "collection_scores": scores}
 
 
-async def ask_joint(client: OwuiClient, model: str, collection_ids: list[str], query: str) -> dict:
+async def ask_joint(
+    client: OwuiClient, model: str, collection_ids: list[str], query: str, history: list[dict] | None = None
+) -> dict:
     """Returns Open WebUI's own raw chat-completion response, unmodified —
     identical shape to calling /api/chat/completions directly with multiple
-    `{"type": "collection", ...}` files entries."""
+    `{"type": "collection", ...}` files entries. `history` — see
+    ask_with_routing above."""
     return await client.chat_completion(
         model=model,
-        messages=[{"role": "user", "content": query}],
+        messages=[*(history or []), {"role": "user", "content": query}],
         files=[{"type": "collection", "id": cid} for cid in collection_ids],
         return_raw=True,
     )

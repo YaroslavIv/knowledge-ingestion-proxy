@@ -6,7 +6,7 @@
 //   /courses/<id>          -> one course project
 // Anything else (bare "/", unknown path) falls back to the Knowledge list so
 // there's always a valid, normalizable route.
-const SECTIONS = new Set(["knowledge", "courses"]);
+const SECTIONS = new Set(["knowledge", "courses", "coe"]);
 
 // Vite bakes whatever --base was passed at build time into
 // import.meta.env.BASE_URL (e.g. "/proxy/" behind the reverse-proxy deploy,
