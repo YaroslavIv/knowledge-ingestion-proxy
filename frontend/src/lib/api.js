@@ -176,6 +176,20 @@ export function reembedFile(knowledgeId, fileId) {
   return request(`/api/kb/${knowledgeId}/files/${fileId}/reembed`, { method: "POST" });
 }
 
+// --- Local backups (originals + course outputs + this proxy's own DB) ---
+
+export function listBackups() {
+  return request("/api/backups");
+}
+
+export function triggerBackup() {
+  return request("/api/backups", { method: "POST" });
+}
+
+export function getBackupDownloadUrl(filename) {
+  return `${BASE_URL}/api/backups/${encodeURIComponent(filename)}/download`;
+}
+
 export function listKnowledgeBaseFiles(knowledgeId) {
   return request(`/api/kb/${knowledgeId}/files`);
 }

@@ -33,6 +33,7 @@ async def client(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "db_path", str(tmp_path / "test.db"))
     monkeypatch.setattr(settings, "originals_dir", str(tmp_path / "originals"))
     monkeypatch.setattr(settings, "course_outputs_dir", str(tmp_path / "course_outputs"))
+    monkeypatch.setattr(settings, "backups_dir", str(tmp_path / "backups"))
 
     # db.py binds engine/session at import time using settings.db_path, so
     # re-create them here against the per-test tmp path.

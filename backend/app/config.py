@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     # app/course_generation/output_storage.py).
     course_outputs_dir: str = str(_DATA_DIR / "course_outputs")
 
+    # Deliberately a sibling of _DATA_DIR, not inside it — app/backup.py
+    # zips up everything under _DATA_DIR, and a backups folder nested
+    # inside its own source directory would end up zipping itself into
+    # every subsequent backup.
+    backups_dir: str = str(_DATA_DIR.parent / "backups")
+    backup_retention_days: int = 30
+
     session_ttl_hours: int = 24
     max_upload_size_mb: int = 50
 

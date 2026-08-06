@@ -191,6 +191,12 @@ class ModelSummary(BaseModel):
     name: str | None = None
 
 
+class BackupSummary(BaseModel):
+    filename: str
+    size_bytes: int
+    created_at: str
+
+
 class CreateCourseProjectRequest(BaseModel):
     name: str
     product_knowledge_ids: list[str]

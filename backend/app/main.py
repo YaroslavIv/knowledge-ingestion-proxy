@@ -7,11 +7,12 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import delete, select
 
+from app.backup import create_backup
 from app.config import settings
 from app.db import AsyncSessionLocal, init_db
 from app.models import IngestionSession, OwuiConnection
 from app.original_storage import purge_orphaned
-from app.routers import ask, auth, connections, courses, documents, kb, preview, tags
+from app.routers import ask, auth, backups, connections, courses, documents, kb, preview, tags
 from app.security import require_api_key, require_owui_bearer
 
 log = logging.getLogger(__name__)
@@ -60,6 +61,11 @@ async def lifespan(app: FastAPI):
 
     scheduler = AsyncIOScheduler()
     scheduler.add_job(_purge_expired_sessions, "interval", minutes=30)
+    # Once a day: one zip with everything this proxy itself persists
+    # (cached originals, published course outputs, its own DB) — see
+    # app/backup.py. A plain function, not a coroutine, so APScheduler runs
+    # it in its own worker thread rather than blocking the event loop.
+    scheduler.add_job(create_backup, "cron", hour=3, minute=0)
     scheduler.start()
 
     yield
@@ -84,6 +90,7 @@ app.add_middleware(
 _auth = [Depends(require_api_key), Depends(require_owui_bearer)]
 app.include_router(auth.router)
 app.include_router(ask.router, dependencies=_auth)
+app.include_router(backups.router, dependencies=_auth)
 app.include_router(connections.router, dependencies=_auth)
 app.include_router(courses.router, dependencies=_auth)
 app.include_router(documents.router, dependencies=_auth)

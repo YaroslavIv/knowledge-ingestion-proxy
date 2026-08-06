@@ -4,9 +4,11 @@
 //   /knowledge/<id>        -> one knowledge base
 //   /courses               -> Courses list
 //   /courses/<id>          -> one course project
+//   /coe                   -> CoE tab
+//   /backups                -> Backups list (no sub-id — one page)
 // Anything else (bare "/", unknown path) falls back to the Knowledge list so
 // there's always a valid, normalizable route.
-const SECTIONS = new Set(["knowledge", "courses", "coe"]);
+const SECTIONS = new Set(["knowledge", "courses", "coe", "backups"]);
 
 // Vite bakes whatever --base was passed at build time into
 // import.meta.env.BASE_URL (e.g. "/proxy/" behind the reverse-proxy deploy,
