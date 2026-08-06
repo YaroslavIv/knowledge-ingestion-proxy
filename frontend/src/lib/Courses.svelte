@@ -10,17 +10,18 @@
 
   let creating = $state(false);
   let newName = $state("");
-  // Product material is often split across several collections — a
-  // checkbox list rather than a single <select>, unlike competitors/
-  // instructions which stay single-collection.
+  // Product/competitors/instructions material can each span several
+  // collections — checkbox lists rather than single <select>s. Visual is
+  // deliberately singular (one style guide, not several to merge).
   let newProductKbs = $state([]);
-  let newCompetitorsKb = $state("");
-  let newInstructionsKb = $state("");
+  let newCompetitorsKbs = $state([]);
+  let newInstructionsKbs = $state([]);
+  let newVisualKb = $state("");
   let newLanguage = $state("en");
   let newAudience = $state("sales");
 
-  function toggleNewProductKb(id) {
-    newProductKbs = newProductKbs.includes(id) ? newProductKbs.filter((i) => i !== id) : [...newProductKbs, id];
+  function toggleId(list, id) {
+    return list.includes(id) ? list.filter((i) => i !== id) : [...list, id];
   }
 
   async function load() {
@@ -39,14 +40,15 @@
   }
 
   async function confirmCreate() {
-    if (!newName.trim() || newProductKbs.length === 0 || !newInstructionsKb) return;
+    if (!newName.trim() || newProductKbs.length === 0 || newInstructionsKbs.length === 0) return;
     error = null;
     try {
       const project = await createCourseProject({
         name: newName.trim(),
         product_knowledge_ids: newProductKbs,
-        competitors_knowledge_id: newCompetitorsKb || null,
-        instructions_knowledge_id: newInstructionsKb,
+        competitors_knowledge_ids: newCompetitorsKbs,
+        instructions_knowledge_ids: newInstructionsKbs,
+        visual_knowledge_id: newVisualKb || null,
         language: newLanguage,
         target_audience: newAudience,
       });
@@ -54,8 +56,9 @@
       creating = false;
       newName = "";
       newProductKbs = [];
-      newCompetitorsKb = "";
-      newInstructionsKb = "";
+      newCompetitorsKbs = [];
+      newInstructionsKbs = [];
+      newVisualKb = "";
       onOpen(project);
     } catch (e) {
       error = e.message;
@@ -102,7 +105,7 @@
 {#if creating}
   <div class="flex flex-col gap-2 px-1 mb-3 bg-white dark:bg-gray-900 rounded-2xl border border-gray-100/30 dark:border-gray-850/30 p-3">
     <input class="text-sm px-3 py-2 rounded-xl bg-gray-50 dark:bg-gray-850 outline-hidden" placeholder="Project name (e.g. UVSS Sales Onboarding)" bind:value={newName} />
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
       <div class="flex flex-col gap-0.5">
         <span class="text-xs text-gray-500" id="product-kb-label">Product material (required, pick one or more)</span>
         <div
@@ -111,23 +114,44 @@
         >
           {#each knowledgeBases as kb}
             <label class="flex items-center gap-1.5">
-              <input type="checkbox" checked={newProductKbs.includes(kb.id)} onchange={() => toggleNewProductKb(kb.id)} />
+              <input type="checkbox" checked={newProductKbs.includes(kb.id)} onchange={() => (newProductKbs = toggleId(newProductKbs, kb.id))} />
               {kb.name}
             </label>
           {/each}
         </div>
       </div>
       <div class="flex flex-col gap-0.5">
-        <label for="competitors-kb" class="text-xs text-gray-500">Competitive intel (optional)</label>
-        <select id="competitors-kb" class="text-sm px-2 py-2 rounded-xl bg-gray-50 dark:bg-gray-850 outline-hidden" bind:value={newCompetitorsKb}>
-          <option value="">None</option>
-          {#each knowledgeBases as kb}<option value={kb.id}>{kb.name}</option>{/each}
-        </select>
+        <span class="text-xs text-gray-500" id="competitors-kb-label">Competitive intel (optional, pick zero or more)</span>
+        <div
+          aria-labelledby="competitors-kb-label"
+          class="flex flex-col gap-0.5 max-h-32 overflow-y-auto text-sm px-2 py-1.5 rounded-xl bg-gray-50 dark:bg-gray-850"
+        >
+          {#each knowledgeBases as kb}
+            <label class="flex items-center gap-1.5">
+              <input type="checkbox" checked={newCompetitorsKbs.includes(kb.id)} onchange={() => (newCompetitorsKbs = toggleId(newCompetitorsKbs, kb.id))} />
+              {kb.name}
+            </label>
+          {/each}
+        </div>
       </div>
       <div class="flex flex-col gap-0.5">
-        <label for="instructions-kb" class="text-xs text-gray-500">Instructions / playbook (required)</label>
-        <select id="instructions-kb" class="text-sm px-2 py-2 rounded-xl bg-gray-50 dark:bg-gray-850 outline-hidden" bind:value={newInstructionsKb}>
-          <option value="">Select a knowledge base…</option>
+        <span class="text-xs text-gray-500" id="instructions-kb-label">Instructions / playbook (required, pick one or more)</span>
+        <div
+          aria-labelledby="instructions-kb-label"
+          class="flex flex-col gap-0.5 max-h-32 overflow-y-auto text-sm px-2 py-1.5 rounded-xl bg-gray-50 dark:bg-gray-850"
+        >
+          {#each knowledgeBases as kb}
+            <label class="flex items-center gap-1.5">
+              <input type="checkbox" checked={newInstructionsKbs.includes(kb.id)} onchange={() => (newInstructionsKbs = toggleId(newInstructionsKbs, kb.id))} />
+              {kb.name}
+            </label>
+          {/each}
+        </div>
+      </div>
+      <div class="flex flex-col gap-0.5">
+        <label for="visual-kb" class="text-xs text-gray-500">Visual style template (optional, one collection)</label>
+        <select id="visual-kb" class="text-sm px-2 py-2 rounded-xl bg-gray-50 dark:bg-gray-850 outline-hidden" bind:value={newVisualKb}>
+          <option value="">None</option>
           {#each knowledgeBases as kb}<option value={kb.id}>{kb.name}</option>{/each}
         </select>
       </div>
@@ -145,7 +169,7 @@
     <button
       type="button"
       class="primary self-start px-4"
-      disabled={!newName.trim() || newProductKbs.length === 0 || !newInstructionsKb}
+      disabled={!newName.trim() || newProductKbs.length === 0 || newInstructionsKbs.length === 0}
       onclick={confirmCreate}
     >
       Create

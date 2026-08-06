@@ -17,7 +17,7 @@ async def _create_project_with_module(client, name="Generate Test Project"):
             json={
                 "name": name,
                 "product_knowledge_ids": ["kb-product"],
-                "instructions_knowledge_id": "kb-instructions",
+                "instructions_knowledge_ids": ["kb-instructions"],
             },
         )
     ).json()
@@ -49,7 +49,9 @@ async def test_generation_context_reports_files_and_current_version_state(client
     body = resp.json()
     assert body == {
         "product_files": [{"knowledge_id": "kb-product", "knowledge_name": "Product Docs", "filenames": ["datasheet.txt"]}],
-        "instructions_files": [],
+        "competitor_files": [],
+        "instructions_files": [{"knowledge_id": "kb-instructions", "knowledge_name": "kb-instructions", "filenames": []}],
+        "visual_present": False,
         "feedback_notes_count": 0,
         "has_current_version": False,
     }
@@ -66,7 +68,7 @@ async def test_generate_from_scratch_pulls_files_from_all_product_collections(cl
             json={
                 "name": "Multi-collection project",
                 "product_knowledge_ids": ["kb-product-a", "kb-product-b"],
-                "instructions_knowledge_id": "kb-instructions",
+                "instructions_knowledge_ids": ["kb-instructions"],
             },
         )
     ).json()
@@ -151,6 +153,98 @@ async def test_generate_from_scratch_when_no_prior_version_exists(client):
     kb_content = upload_route.calls[-1].request.content.decode("utf-8")  # raw artifact uploads first
     assert "Original lecture content." in kb_content
     assert "Write the first version." in kb_content  # notes = instruction
+
+
+@respx.mock
+async def test_generate_can_scope_to_a_subset_of_product_collections(client):
+    """An explicit product_knowledge_ids list narrows which collections this
+    one call draws from — kb-product-b's files endpoint is deliberately
+    never mocked, so the request would error if it were fetched anyway."""
+    project = (
+        await client.post(
+            "/api/courses",
+            json={
+                "name": "Scoped project",
+                "product_knowledge_ids": ["kb-product-a", "kb-product-b"],
+                "instructions_knowledge_ids": ["kb-instructions"],
+            },
+        )
+    ).json()
+    module = (
+        await client.post(
+            f"/api/courses/{project['id']}/modules",
+            json={"title": "Module 01", "learning_objectives": []},
+        )
+    ).json()
+
+    respx.get("http://fake-owui.test/api/v1/knowledge/kb-product-a/files").mock(
+        return_value=Response(200, json={"items": [{"id": "file-a", "filename": "datasheet-a.txt", "meta": {}}]})
+    )
+    respx.get("http://fake-owui.test/api/v1/files/file-a/data/content").mock(
+        return_value=Response(200, json={"content": "Product A supports 1000 FPS."})
+    )
+    respx.get("http://fake-owui.test/api/v1/knowledge/kb-instructions/files").mock(
+        return_value=Response(200, json={"items": []})
+    )
+    chat_route = respx.post("http://fake-owui.test/api/v1/chat/completions").mock(
+        return_value=Response(200, json={"choices": [{"message": {"content": GENERATED_HTML_V1}}]})
+    )
+    respx.post("http://fake-owui.test/api/v1/knowledge/create").mock(
+        return_value=Response(200, json={"id": "kb-output", "name": "x", "description": ""})
+    )
+    respx.post("http://fake-owui.test/api/v1/knowledge/kb-output/file/add").mock(return_value=Response(200))
+    respx.post("http://fake-owui.test/api/v1/files/").mock(
+        return_value=Response(200, json={"id": "file-out-1", "filename": "m.md"})
+    )
+
+    resp = await client.post(
+        f"/api/courses/{project['id']}/modules/{module['id']}/output/generate",
+        json={"model": "gpt-4o-mini", "instruction": "Write it.", "product_knowledge_ids": ["kb-product-a"]},
+    )
+    assert resp.status_code == 200
+
+    sent_prompt = json.loads(chat_route.calls[0].request.content)["messages"][1]["content"]
+    assert "Product A supports 1000 FPS." in sent_prompt
+
+
+@respx.mock
+async def test_generate_persists_scoping_choices_for_the_next_call(client):
+    """last_generation_settings prefills the next generate/revise call on
+    this module, so a deliberately narrowed scope doesn't have to be redone
+    by hand every time."""
+    project, module = await _create_project_with_module(client)
+
+    respx.get("http://fake-owui.test/api/v1/knowledge/kb-instructions/files").mock(
+        return_value=Response(200, json={"items": []})
+    )
+    respx.post("http://fake-owui.test/api/v1/chat/completions").mock(
+        return_value=Response(200, json={"choices": [{"message": {"content": GENERATED_HTML_V1}}]})
+    )
+    respx.post("http://fake-owui.test/api/v1/knowledge/create").mock(
+        return_value=Response(200, json={"id": "kb-output", "name": "x", "description": ""})
+    )
+    respx.post("http://fake-owui.test/api/v1/knowledge/kb-output/file/add").mock(return_value=Response(200))
+    respx.post("http://fake-owui.test/api/v1/files/").mock(
+        return_value=Response(200, json={"id": "file-out-1", "filename": "m.md"})
+    )
+
+    resp = await client.post(
+        f"/api/courses/{project['id']}/modules/{module['id']}/output/generate",
+        json={
+            "model": "gpt-4o-mini",
+            "instruction": "Write it.",
+            "product_knowledge_ids": [],
+            "instructions_knowledge_ids": [],
+            "include_visual": False,
+        },
+    )
+    assert resp.status_code == 200
+
+    modules = (await client.get(f"/api/courses/{project['id']}/modules")).json()
+    saved = modules[0]["last_generation_settings"]
+    assert saved["product_knowledge_ids"] == []
+    assert saved["instructions_knowledge_ids"] == []
+    assert saved["include_visual"] is False
 
 
 @respx.mock
@@ -305,7 +399,7 @@ async def test_generate_new_module_always_lists_other_modules_and_optionally_the
         json={
             "model": "gpt-4o-mini",
             "instruction": "Only quiz on what this course actually covered.",
-            "include_other_modules": True,
+            "other_module_ids": [module_a["id"]],
         },
     )
     assert resp.status_code == 200

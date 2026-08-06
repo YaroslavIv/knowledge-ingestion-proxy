@@ -267,6 +267,42 @@ export function removeCourseMaterial(projectId, knowledgeId) {
   return request(`/api/courses/${projectId}/materials/${knowledgeId}`, { method: "DELETE" });
 }
 
+export function addCourseCompetitor(projectId, knowledgeId) {
+  return request(`/api/courses/${projectId}/competitors`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ knowledge_id: knowledgeId }),
+  });
+}
+
+export function removeCourseCompetitor(projectId, knowledgeId) {
+  return request(`/api/courses/${projectId}/competitors/${knowledgeId}`, { method: "DELETE" });
+}
+
+export function addCourseInstructions(projectId, knowledgeId) {
+  return request(`/api/courses/${projectId}/instructions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ knowledge_id: knowledgeId }),
+  });
+}
+
+export function removeCourseInstructions(projectId, knowledgeId) {
+  return request(`/api/courses/${projectId}/instructions/${knowledgeId}`, { method: "DELETE" });
+}
+
+export function setCourseVisual(projectId, knowledgeId) {
+  return request(`/api/courses/${projectId}/visual`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ knowledge_id: knowledgeId }),
+  });
+}
+
+export function clearCourseVisual(projectId) {
+  return request(`/api/courses/${projectId}/visual`, { method: "DELETE" });
+}
+
 export function seedCourseFeedback(projectId, text) {
   return request(`/api/courses/${projectId}/feedback/seed`, {
     method: "POST",
@@ -350,14 +386,27 @@ export function bumpOutputVersion(projectId, versionTag) {
 }
 
 export function generateModuleOutput(projectId, moduleId, model, instruction, options = {}) {
-  const { includeOtherModules = false, regenerateFromScratch = false } = options;
+  const {
+    productKnowledgeIds = null,
+    competitorKnowledgeIds = null,
+    instructionsKnowledgeIds = null,
+    includeVisual = true,
+    otherModuleIds = [],
+    styleReferenceModuleId = null,
+    regenerateFromScratch = false,
+  } = options;
   return request(`/api/courses/${projectId}/modules/${moduleId}/output/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
       instruction,
-      include_other_modules: includeOtherModules,
+      product_knowledge_ids: productKnowledgeIds,
+      competitor_knowledge_ids: competitorKnowledgeIds,
+      instructions_knowledge_ids: instructionsKnowledgeIds,
+      include_visual: includeVisual,
+      other_module_ids: otherModuleIds,
+      style_reference_module_id: styleReferenceModuleId,
       regenerate_from_scratch: regenerateFromScratch,
     }),
   });

@@ -187,8 +187,9 @@ class ModelSummary(BaseModel):
 class CreateCourseProjectRequest(BaseModel):
     name: str
     product_knowledge_ids: list[str]
-    competitors_knowledge_id: str | None = None
-    instructions_knowledge_id: str
+    competitors_knowledge_ids: list[str] = []
+    instructions_knowledge_ids: list[str]
+    visual_knowledge_id: str | None = None
     pedagogy_version: str = "v2"
     language: str = "en"
     target_audience: str = "sales"
@@ -198,12 +199,17 @@ class AddCourseMaterialRequest(BaseModel):
     knowledge_id: str
 
 
+class SetCourseVisualRequest(BaseModel):
+    knowledge_id: str
+
+
 class CourseProjectSummary(BaseModel):
     id: str
     name: str
     product_knowledge_ids: list[str]
-    competitors_knowledge_id: str | None = None
-    instructions_knowledge_id: str
+    competitors_knowledge_ids: list[str]
+    instructions_knowledge_ids: list[str]
+    visual_knowledge_id: str | None = None
     output_knowledge_id: str | None = None
     pedagogy_version: str
     language: str
@@ -224,6 +230,7 @@ class CourseModuleSpecSummary(BaseModel):
     current_output_version: str | None = None
     output_filename: str | None = None
     output_published_at: str | None = None
+    last_generation_settings: dict | None = None
 
 
 class UpdateCourseModuleSpecRequest(BaseModel):
@@ -277,11 +284,30 @@ class BumpOutputVersionRequest(BaseModel):
 class GenerateModuleOutputRequest(BaseModel):
     model: str
     instruction: str
-    # Generating a brand-new module (e.g. a final test) may need to know
-    # what the OTHER modules actually cover, not just raw product material —
-    # opt in to pull their extracted lecture text into the prompt. Ignored
-    # when revising an existing module.
-    include_other_modules: bool = False
+    # Which collections of each role to actually draw from for this call —
+    # None means "every collection the project currently has in that role"
+    # (the safe default for any caller that doesn't scope explicitly); an
+    # explicit list (including []) is honored exactly as given, so a caller
+    # can deliberately exclude a noisy/outdated collection for one run.
+    product_knowledge_ids: list[str] | None = None
+    competitor_knowledge_ids: list[str] | None = None
+    instructions_knowledge_ids: list[str] | None = None
+    # Whether to pull in the project's visual-style collection, if it has one.
+    include_visual: bool = True
+    # Which sibling modules' actual generated content to ground this call in
+    # — e.g. a final-test module that must only quiz material the course
+    # really covers. Every sibling's title+objectives are always visible
+    # regardless of this list (cheap, and prevents accidental repeats); this
+    # only controls whether their full lecture text is also included. Applies
+    # identically whether this call generates from scratch or revises.
+    other_module_ids: list[str] = []
+    # An explicit sibling module whose HTML to use as a "match this look"
+    # visual template, regardless of whether it's also in other_module_ids
+    # (content-visibility and style-borrowing are independent choices). None
+    # falls back to the project's visual collection, then (only for a
+    # from-scratch generation with neither available) the first sibling
+    # module found with a published page.
+    style_reference_module_id: str | None = None
     # Treat this as a from-scratch generation even though a current version
     # already exists — for when a module came out unusable (e.g. an earlier
     # from-scratch generation invented its own layout/colors instead of
@@ -301,10 +327,14 @@ class GenerationContextSummary(BaseModel):
     """What a Generate/Revise call for one module will actually pull in —
     fetched fresh from the collections every time (see generate_output),
     never cached — so this always reflects their current real content, not
-    whatever they held the last time this module was generated."""
+    whatever they held the last time this module was generated. Drives the
+    scoping checkboxes in the generate/revise form: one entry per collection
+    the caller could choose to include or exclude for this specific call."""
 
     product_files: list[ProductCollectionFiles]
-    instructions_files: list[str]
+    competitor_files: list[ProductCollectionFiles]
+    instructions_files: list[ProductCollectionFiles]
+    visual_present: bool
     feedback_notes_count: int
     has_current_version: bool
 

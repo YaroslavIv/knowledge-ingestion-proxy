@@ -8,8 +8,8 @@ async def _create_project(client, **overrides):
     body = {
         "name": "UVSS Onboarding",
         "product_knowledge_ids": ["kb-product"],
-        "competitors_knowledge_id": "kb-competitors",
-        "instructions_knowledge_id": "kb-instructions",
+        "competitors_knowledge_ids": ["kb-competitors"],
+        "instructions_knowledge_ids": ["kb-instructions"],
         "pedagogy_version": "v2",
         "language": "en",
         "target_audience": "sales",
@@ -23,7 +23,7 @@ async def _create_project(client, **overrides):
 async def test_create_and_get_course_project(client):
     project = await _create_project(client)
     assert project["name"] == "UVSS Onboarding"
-    assert project["competitors_knowledge_id"] == "kb-competitors"
+    assert project["competitors_knowledge_ids"] == ["kb-competitors"]
     assert project["product_knowledge_ids"] == ["kb-product"]
 
     get_resp = await client.get(f"/api/courses/{project['id']}")
@@ -39,7 +39,15 @@ async def test_get_missing_project_404s(client):
 async def test_create_project_requires_at_least_one_product_collection(client):
     resp = await client.post(
         "/api/courses",
-        json={"name": "No product material", "product_knowledge_ids": [], "instructions_knowledge_id": "kb-i"},
+        json={"name": "No product material", "product_knowledge_ids": [], "instructions_knowledge_ids": ["kb-i"]},
+    )
+    assert resp.status_code == 400
+
+
+async def test_create_project_requires_at_least_one_instructions_collection(client):
+    resp = await client.post(
+        "/api/courses",
+        json={"name": "No instructions", "product_knowledge_ids": ["kb-p"], "instructions_knowledge_ids": []},
     )
     assert resp.status_code == 400
 
@@ -64,6 +72,57 @@ async def test_cannot_remove_the_last_product_material(client):
     project = await _create_project(client)
     resp = await client.delete(f"/api/courses/{project['id']}/materials/kb-product")
     assert resp.status_code == 400
+
+
+async def test_add_and_remove_course_competitor(client):
+    project = await _create_project(client)
+
+    add_resp = await client.post(f"/api/courses/{project['id']}/competitors", json={"knowledge_id": "kb-second"})
+    assert add_resp.status_code == 200
+    assert add_resp.json()["competitors_knowledge_ids"] == ["kb-competitors", "kb-second"]
+
+    remove_resp = await client.delete(f"/api/courses/{project['id']}/competitors/kb-competitors")
+    assert remove_resp.status_code == 200
+    assert remove_resp.json()["competitors_knowledge_ids"] == ["kb-second"]
+
+    # competitors is optional — removing the last one is fine
+    remove_last_resp = await client.delete(f"/api/courses/{project['id']}/competitors/kb-second")
+    assert remove_last_resp.status_code == 200
+    assert remove_last_resp.json()["competitors_knowledge_ids"] == []
+
+
+async def test_add_and_remove_course_instructions(client):
+    project = await _create_project(client)
+
+    add_resp = await client.post(f"/api/courses/{project['id']}/instructions", json={"knowledge_id": "kb-second"})
+    assert add_resp.status_code == 200
+    assert add_resp.json()["instructions_knowledge_ids"] == ["kb-instructions", "kb-second"]
+
+    remove_resp = await client.delete(f"/api/courses/{project['id']}/instructions/kb-instructions")
+    assert remove_resp.status_code == 200
+    assert remove_resp.json()["instructions_knowledge_ids"] == ["kb-second"]
+
+
+async def test_cannot_remove_the_last_instructions_collection(client):
+    project = await _create_project(client)
+    resp = await client.delete(f"/api/courses/{project['id']}/instructions/kb-instructions")
+    assert resp.status_code == 400
+
+
+async def test_set_change_and_clear_course_visual(client):
+    project = await _create_project(client)
+    assert project["visual_knowledge_id"] is None
+
+    set_resp = await client.put(f"/api/courses/{project['id']}/visual", json={"knowledge_id": "kb-visual"})
+    assert set_resp.status_code == 200
+    assert set_resp.json()["visual_knowledge_id"] == "kb-visual"
+
+    changed_resp = await client.put(f"/api/courses/{project['id']}/visual", json={"knowledge_id": "kb-visual-2"})
+    assert changed_resp.json()["visual_knowledge_id"] == "kb-visual-2"
+
+    cleared_resp = await client.delete(f"/api/courses/{project['id']}/visual")
+    assert cleared_resp.status_code == 200
+    assert cleared_resp.json()["visual_knowledge_id"] is None
 
 
 async def test_list_course_projects(client):
@@ -213,7 +272,7 @@ async def test_split_is_additive_not_destructive(client):
     respx.get("http://fake-owui.test/api/v1/knowledge/kb-instructions/files").mock(
         return_value=Response(200, json={"items": []})
     )
-    respx.post("http://fake-owui.test/api/v1/chat/completions").mock(
+    chat_route = respx.post("http://fake-owui.test/api/v1/chat/completions").mock(
         return_value=Response(
             200,
             json={"choices": [{"message": {"content": json.dumps({"modules": [{"title": "New module"}]})}}]},
@@ -223,6 +282,11 @@ async def test_split_is_additive_not_destructive(client):
     resp = await client.post(f"/api/courses/{project['id']}/split", json={"model": "gpt-4o-mini"})
     assert resp.status_code == 200
     assert resp.json()[0]["order_index"] == 1  # appended after the existing one
+
+    # the model was told about the already-approved module, so it doesn't
+    # blindly propose a duplicate/overlapping one
+    sent_prompt = json.loads(chat_route.calls[0].request.content)["messages"][1]["content"]
+    assert "Already approved" in sent_prompt
 
     all_modules = (await client.get(f"/api/courses/{project['id']}/modules")).json()
     assert len(all_modules) == 2

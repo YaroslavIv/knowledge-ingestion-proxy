@@ -37,6 +37,7 @@ from app.schemas import (
     ModuleOutputContentResponse,
     ProductCollectionFiles,
     SeedFeedbackRequest,
+    SetCourseVisualRequest,
     SplitModulesRequest,
     UpdateCourseModuleSpecRequest,
 )
@@ -54,8 +55,9 @@ def _project_summary(row: CourseProject) -> CourseProjectSummary:
         id=row.id,
         name=row.name,
         product_knowledge_ids=list(row.product_knowledge_ids or []),
-        competitors_knowledge_id=row.competitors_knowledge_id,
-        instructions_knowledge_id=row.instructions_knowledge_id,
+        competitors_knowledge_ids=list(row.competitors_knowledge_ids or []),
+        instructions_knowledge_ids=list(row.instructions_knowledge_ids or []),
+        visual_knowledge_id=row.visual_knowledge_id,
         output_knowledge_id=row.output_knowledge_id,
         pedagogy_version=row.pedagogy_version,
         language=row.language,
@@ -78,6 +80,7 @@ def _module_summary(row: CourseModuleSpec, current_output: CourseModuleOutputVer
         current_output_version=current_output.version_tag if current_output else None,
         output_filename=current_output.filename if current_output else None,
         output_published_at=_iso(current_output.created_at) if current_output else None,
+        last_generation_settings=row.last_generation_settings,
     )
 
 
@@ -148,12 +151,13 @@ async def _load_kb_files_with_content(client: OwuiClient, knowledge_id: str) -> 
     return files
 
 
-async def _load_product_files(client: OwuiClient, project: CourseProject) -> list[tuple[str, str]]:
-    """Product material can span several collections — flattens all of
-    them into one (filename, text) list, same shape a single collection's
-    _load_kb_files_with_content would have returned."""
+async def _load_files_for_ids(client: OwuiClient, knowledge_ids: list[str] | None) -> list[tuple[str, str]]:
+    """Any role that can span several collections (product, competitors,
+    instructions) flattens all of them into one (filename, text) list, same
+    shape a single collection's _load_kb_files_with_content would have
+    returned."""
     files: list[tuple[str, str]] = []
-    for knowledge_id in project.product_knowledge_ids or []:
+    for knowledge_id in knowledge_ids or []:
         files.extend(await _load_kb_files_with_content(client, knowledge_id))
     return files
 
@@ -201,11 +205,14 @@ async def list_course_projects(db: AsyncSession = Depends(get_db)):
 async def create_course_project(body: CreateCourseProjectRequest, db: AsyncSession = Depends(get_db)):
     if not body.product_knowledge_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one product knowledge base is required")
+    if not body.instructions_knowledge_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one instructions knowledge base is required")
     row = CourseProject(
         name=body.name,
         product_knowledge_ids=body.product_knowledge_ids,
-        competitors_knowledge_id=body.competitors_knowledge_id,
-        instructions_knowledge_id=body.instructions_knowledge_id,
+        competitors_knowledge_ids=body.competitors_knowledge_ids,
+        instructions_knowledge_ids=body.instructions_knowledge_ids,
+        visual_knowledge_id=body.visual_knowledge_id,
         pedagogy_version=body.pedagogy_version,
         language=body.language,
         target_audience=body.target_audience,
@@ -215,6 +222,25 @@ async def create_course_project(body: CreateCourseProjectRequest, db: AsyncSessi
     return _project_summary(row)
 
 
+def _add_collection_id(project: CourseProject, field_name: str, knowledge_id: str) -> list[str]:
+    ids = list(getattr(project, field_name) or [])
+    if knowledge_id not in ids:
+        ids.append(knowledge_id)
+        setattr(project, field_name, ids)
+    return ids
+
+
+def _remove_collection_id(project: CourseProject, field_name: str, knowledge_id: str, min_required: int) -> list[str]:
+    ids = [i for i in (getattr(project, field_name) or []) if i != knowledge_id]
+    if len(ids) < min_required:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"A course project needs at least {min_required} collection(s) in this role",
+        )
+    setattr(project, field_name, ids)
+    return ids
+
+
 @router.post("/{project_id}/materials", response_model=CourseProjectSummary)
 async def add_course_material(project_id: str, body: AddCourseMaterialRequest, db: AsyncSession = Depends(get_db)):
     """Add another product-material collection to this project — product
@@ -222,23 +248,72 @@ async def add_course_material(project_id: str, body: AddCourseMaterialRequest, d
     collection plus a separate one per sub-product), and generation pulls
     files from all of them (see _load_kb_files_with_content usage below)."""
     project = await _get_project_or_404(db, project_id)
-    ids = list(project.product_knowledge_ids or [])
-    if body.knowledge_id not in ids:
-        ids.append(body.knowledge_id)
-        project.product_knowledge_ids = ids
-        await db.commit()
+    _add_collection_id(project, "product_knowledge_ids", body.knowledge_id)
+    await db.commit()
     return _project_summary(project)
 
 
 @router.delete("/{project_id}/materials/{knowledge_id}", response_model=CourseProjectSummary)
 async def remove_course_material(project_id: str, knowledge_id: str, db: AsyncSession = Depends(get_db)):
     project = await _get_project_or_404(db, project_id)
-    ids = [i for i in (project.product_knowledge_ids or []) if i != knowledge_id]
-    if not ids:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="A course project needs at least one product material collection"
-        )
-    project.product_knowledge_ids = ids
+    _remove_collection_id(project, "product_knowledge_ids", knowledge_id, min_required=1)
+    await db.commit()
+    return _project_summary(project)
+
+
+@router.post("/{project_id}/competitors", response_model=CourseProjectSummary)
+async def add_course_competitor(project_id: str, body: AddCourseMaterialRequest, db: AsyncSession = Depends(get_db)):
+    """Competitive intel can also span several collections (e.g. one dossier
+    per competitor) — same additive pattern as product material, just an
+    optional role (a project can have zero)."""
+    project = await _get_project_or_404(db, project_id)
+    _add_collection_id(project, "competitors_knowledge_ids", body.knowledge_id)
+    await db.commit()
+    return _project_summary(project)
+
+
+@router.delete("/{project_id}/competitors/{knowledge_id}", response_model=CourseProjectSummary)
+async def remove_course_competitor(project_id: str, knowledge_id: str, db: AsyncSession = Depends(get_db)):
+    project = await _get_project_or_404(db, project_id)
+    _remove_collection_id(project, "competitors_knowledge_ids", knowledge_id, min_required=0)
+    await db.commit()
+    return _project_summary(project)
+
+
+@router.post("/{project_id}/instructions", response_model=CourseProjectSummary)
+async def add_course_instructions(project_id: str, body: AddCourseMaterialRequest, db: AsyncSession = Depends(get_db)):
+    """Methodology/playbook material can also span several collections
+    (e.g. a base playbook plus a per-region addendum)."""
+    project = await _get_project_or_404(db, project_id)
+    _add_collection_id(project, "instructions_knowledge_ids", body.knowledge_id)
+    await db.commit()
+    return _project_summary(project)
+
+
+@router.delete("/{project_id}/instructions/{knowledge_id}", response_model=CourseProjectSummary)
+async def remove_course_instructions(project_id: str, knowledge_id: str, db: AsyncSession = Depends(get_db)):
+    project = await _get_project_or_404(db, project_id)
+    _remove_collection_id(project, "instructions_knowledge_ids", knowledge_id, min_required=1)
+    await db.commit()
+    return _project_summary(project)
+
+
+@router.put("/{project_id}/visual", response_model=CourseProjectSummary)
+async def set_course_visual(project_id: str, body: SetCourseVisualRequest, db: AsyncSession = Depends(get_db)):
+    """Set (or replace) the project's single visual-style collection — a
+    style guide/template for the generated HTML's look, unlike the other
+    roles this is deliberately one collection, not a list (see CourseProject
+    docstring)."""
+    project = await _get_project_or_404(db, project_id)
+    project.visual_knowledge_id = body.knowledge_id
+    await db.commit()
+    return _project_summary(project)
+
+
+@router.delete("/{project_id}/visual", response_model=CourseProjectSummary)
+async def clear_course_visual(project_id: str, db: AsyncSession = Depends(get_db)):
+    project = await _get_project_or_404(db, project_id)
+    project.visual_knowledge_id = None
     await db.commit()
     return _project_summary(project)
 
@@ -471,10 +546,25 @@ async def split_into_modules(
     """
     project = await _get_project_or_404(db, project_id)
 
-    product_files = await _load_product_files(client, project)
-    instructions_files = await _load_kb_files_with_content(client, project.instructions_knowledge_id)
+    product_files = await _load_files_for_ids(client, project.product_knowledge_ids)
+    instructions_files = await _load_files_for_ids(client, project.instructions_knowledge_ids)
     methodology_text = "\n\n---\n\n".join(content for _, content in instructions_files)
     feedback_notes = await _load_open_feedback_notes(db, project_id)
+
+    # So a re-run never proposes a module that duplicates/overlaps one
+    # already sitting in this project (proposed or approved) — it only ever
+    # saw source material + feedback before, with zero awareness of what
+    # the course already has.
+    existing_rows = (
+        await db.execute(
+            select(CourseModuleSpec)
+            .where(CourseModuleSpec.project_id == project_id)
+            .order_by(CourseModuleSpec.order_index)
+        )
+    ).scalars().all()
+    existing_modules = [
+        {"title": r.title, "learning_objectives": list(r.learning_objectives or [])} for r in existing_rows
+    ]
 
     try:
         proposed = await propose_modules(
@@ -485,14 +575,12 @@ async def split_into_modules(
             feedback_notes=feedback_notes,
             target_audience=project.target_audience,
             language=project.language,
+            existing_modules=existing_modules,
         )
     except (OwuiError, ValueError) as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
 
-    existing_count = (
-        await db.execute(select(CourseModuleSpec).where(CourseModuleSpec.project_id == project_id))
-    ).scalars().all()
-    start_index = len(existing_count)
+    start_index = len(existing_rows)
 
     rows = []
     for i, m in enumerate(proposed):
@@ -667,7 +755,9 @@ async def get_generation_context(
     """What a Generate/Revise call for this module will actually pull in —
     shown on the frontend before generating, so it's never a silent guess
     (e.g. confirm here that a cleaned-up collection's file list is now
-    actually empty/updated before generating against it)."""
+    actually empty/updated before generating against it). Also drives the
+    scoping checkboxes in the generate/revise form: one entry per collection
+    the caller can choose to include or exclude for this specific call."""
     project = await _get_project_or_404(db, project_id)
     await _get_module_or_404(db, project_id, module_id)
 
@@ -677,21 +767,27 @@ async def get_generation_context(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=e.detail) from e
     names_by_id = {item["id"]: item["name"] for item in kb_items}
 
-    product_files = [
-        ProductCollectionFiles(
-            knowledge_id=knowledge_id,
-            knowledge_name=names_by_id.get(knowledge_id, knowledge_id),
-            filenames=await _list_kb_filenames(client, knowledge_id),
-        )
-        for knowledge_id in project.product_knowledge_ids or []
-    ]
-    instructions_files = await _list_kb_filenames(client, project.instructions_knowledge_id)
+    async def _collection_files(knowledge_ids: list[str] | None) -> list[ProductCollectionFiles]:
+        return [
+            ProductCollectionFiles(
+                knowledge_id=knowledge_id,
+                knowledge_name=names_by_id.get(knowledge_id, knowledge_id),
+                filenames=await _list_kb_filenames(client, knowledge_id),
+            )
+            for knowledge_id in knowledge_ids or []
+        ]
+
+    product_files = await _collection_files(project.product_knowledge_ids)
+    competitor_files = await _collection_files(project.competitors_knowledge_ids)
+    instructions_files = await _collection_files(project.instructions_knowledge_ids)
     feedback_notes = await _load_open_feedback_notes(db, project_id)
     current = await _get_current_output(db, module_id)
 
     return GenerationContextSummary(
         product_files=product_files,
+        competitor_files=competitor_files,
         instructions_files=instructions_files,
+        visual_present=bool(project.visual_knowledge_id),
         feedback_notes_count=len(feedback_notes),
         has_current_version=current is not None,
     )
@@ -723,51 +819,78 @@ async def generate_output(
     if not body.regenerate_from_scratch and current is not None and current.html_stored_path and Path(current.html_stored_path).is_file():
         current_html = load_stored_text(current.html_stored_path)
 
-    # Always pulled fresh from the collections — for both a from-scratch
-    # write and a revise. A revise that skipped this would only ever see
-    # its own previous version's already-baked-in HTML, so it could keep
-    # citing facts the source material no longer has (e.g. after cleaning
-    # up the product collection) with nothing to ever correct that.
-    product_files = await _load_product_files(client, project)
-    product_excerpts = build_file_excerpts(product_files)
-    instructions_files = await _load_kb_files_with_content(client, project.instructions_knowledge_id)
+    # None from the caller means "every collection the project currently
+    # has in that role" (the safe default); an explicit list — including an
+    # empty one — is honored exactly as given, so a call can deliberately
+    # narrow or exclude a role just for this run.
+    product_ids = body.product_knowledge_ids if body.product_knowledge_ids is not None else list(project.product_knowledge_ids or [])
+    competitor_ids = body.competitor_knowledge_ids if body.competitor_knowledge_ids is not None else list(project.competitors_knowledge_ids or [])
+    instructions_ids = body.instructions_knowledge_ids if body.instructions_knowledge_ids is not None else list(project.instructions_knowledge_ids or [])
+
+    # Always pulled fresh from the collections, in full — no excerpt
+    # truncation here (unlike the module-splitting stage, which only needs
+    # enough to decide structure): real lecture content must see everything,
+    # not just an excerpt. This runs for both a from-scratch write and a
+    # revise — a revise that skipped this would only ever see its own
+    # previous version's already-baked-in HTML, so it could keep citing
+    # facts the source material no longer has (e.g. after a cleanup) with
+    # nothing to ever correct that.
+    product_files = [{"filename": f, "content": c} for f, c in await _load_files_for_ids(client, product_ids)]
+    competitor_files = [{"filename": f, "content": c} for f, c in await _load_files_for_ids(client, competitor_ids)]
+    instructions_files = await _load_files_for_ids(client, instructions_ids)
     methodology_text = "\n\n---\n\n".join(content for _, content in instructions_files)
 
-    # A brand-new module (e.g. a final test) may need to know what the course
-    # already covers — the other modules' specs always, their actual
-    # generated content only when explicitly requested (it can be large).
-    other_modules: list[dict] = []
-    other_modules_content: list[dict] = []
-    style_reference_html: str | None = None
-    if current_html is None:
-        other_specs = (
-            await db.execute(
-                select(CourseModuleSpec)
-                .where(
-                    CourseModuleSpec.project_id == project_id,
-                    CourseModuleSpec.id != module_id,
-                )
-                .order_by(CourseModuleSpec.order_index)
-            )
-        ).scalars().all()
-        other_modules = [
-            {"title": m.title, "learning_objectives": list(m.learning_objectives or [])} for m in other_specs
-        ]
-        if body.include_other_modules:
-            for m in other_specs:
-                other_current = await _get_current_output(db, m.id)
-                if other_current and other_current.html_stored_path and Path(other_current.html_stored_path).is_file():
-                    other_text = extract_text_from_html(load_stored_text(other_current.html_stored_path))
-                    if other_text.strip():
-                        other_modules_content.append({"title": m.title, "text": other_text})
+    visual_guidance = None
+    if body.include_visual and project.visual_knowledge_id:
+        visual_files = await _load_kb_files_with_content(client, project.visual_knowledge_id)
+        visual_guidance = "\n\n---\n\n".join(content for _, content in visual_files) or None
 
-        # A brand-new module has no page of its own to inherit CSS/layout
-        # from, and describing "the other modules" as stripped text (above)
-        # carries zero visual information — the model was inventing its own
-        # look from scratch, which is why a from-scratch module (e.g. a
-        # final-test module) could end up styled nothing like the rest of
-        # the course. Give it one real module's actual HTML, in order, as an
-        # explicit template to visually match.
+    # Every sibling module's title+objectives is always visible — cheap, and
+    # avoids accidental repeats — regardless of whether this call generates
+    # from scratch or revises. Their actual generated content is only
+    # pulled in for modules the caller explicitly selected (other_module_ids)
+    # — it can be large, and isn't always relevant to a given change.
+    other_specs = (
+        await db.execute(
+            select(CourseModuleSpec)
+            .where(
+                CourseModuleSpec.project_id == project_id,
+                CourseModuleSpec.id != module_id,
+            )
+            .order_by(CourseModuleSpec.order_index)
+        )
+    ).scalars().all()
+    other_modules = [
+        {"title": m.title, "learning_objectives": list(m.learning_objectives or [])} for m in other_specs
+    ]
+    other_modules_content: list[dict] = []
+    for m in other_specs:
+        if m.id not in (body.other_module_ids or []):
+            continue
+        other_current = await _get_current_output(db, m.id)
+        if other_current and other_current.html_stored_path and Path(other_current.html_stored_path).is_file():
+            other_text = extract_text_from_html(load_stored_text(other_current.html_stored_path))
+            if other_text.strip():
+                other_modules_content.append({"title": m.title, "text": other_text})
+
+    # Visual style priority: an explicitly chosen sibling module always
+    # wins (content-visibility above and style-borrowing here are
+    # independent choices); otherwise the project's visual-guidance
+    # collection (if included) already covers this, so nothing else is
+    # borrowed; only when neither is available does a from-scratch
+    # generation fall back to the old behavior of borrowing the first
+    # sibling module's actual page as a visual template — a from-scratch
+    # module has no page of its own to inherit CSS/layout from, and "the
+    # other modules" as stripped text (above) carries zero visual
+    # information on its own.
+    style_reference_html: str | None = None
+    if body.style_reference_module_id:
+        ref_module = next((m for m in other_specs if m.id == body.style_reference_module_id), None)
+        if ref_module:
+            ref_current = await _get_current_output(db, ref_module.id)
+            if ref_current and ref_current.html_stored_path and Path(ref_current.html_stored_path).is_file():
+                style_reference_html = load_stored_text(ref_current.html_stored_path)
+    elif not visual_guidance and current_html is None:
         for m in other_specs:
             ref_current = await _get_current_output(db, m.id)
             if ref_current and ref_current.html_stored_path and Path(ref_current.html_stored_path).is_file():
@@ -784,15 +907,29 @@ async def generate_output(
             learning_objectives=list(module.learning_objectives or []),
             current_html=current_html,
             instruction=body.instruction,
-            product_excerpts=product_excerpts,
+            product_files=product_files,
             methodology_text=methodology_text,
             feedback_notes=feedback_notes,
+            competitor_files=competitor_files,
+            visual_guidance=visual_guidance,
             other_modules=other_modules,
             other_modules_content=other_modules_content,
             style_reference_html=style_reference_html,
         )
     except (OwuiError, ValueError) as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+    # Remembered so the next generate/revise call on this module prefills
+    # the same scoping instead of defaulting back to "everything" — see
+    # CourseModuleSpec.last_generation_settings.
+    module.last_generation_settings = {
+        "product_knowledge_ids": product_ids,
+        "competitor_knowledge_ids": competitor_ids,
+        "instructions_knowledge_ids": instructions_ids,
+        "include_visual": body.include_visual,
+        "other_module_ids": list(body.other_module_ids or []),
+        "style_reference_module_id": body.style_reference_module_id,
+    }
 
     new_version = await _persist_new_output_version(
         db,

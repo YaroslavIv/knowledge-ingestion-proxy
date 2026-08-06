@@ -105,6 +105,40 @@ async def test_chat_completion_falls_back_when_v1_returns_html_instead_of_json()
 
 
 @respx.mock
+async def test_chat_completion_retries_without_temperature_when_the_model_rejects_it():
+    """Some newer reasoning-style models (GPT-5-class and similar) reject any
+    non-default temperature via the OpenAI-compatible API. This must retry
+    once with the parameter omitted entirely instead of failing the whole
+    generation/revision call outright."""
+    route = respx.post("http://fake-owui.test/api/v1/chat/completions").mock(
+        side_effect=[
+            Response(400, json={"detail": "Unsupported value: 'temperature' does not support 0.2 with this model."}),
+            Response(200, json={"choices": [{"message": {"content": "ok"}}]}),
+        ]
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+    content = await client.chat_completion(
+        model="gpt-5.6-sol", messages=[{"role": "user", "content": "hi"}], temperature=0.2
+    )
+    assert content == "ok"
+    assert route.call_count == 2
+    first_body = json.loads(route.calls[0].request.content)
+    retry_body = json.loads(route.calls[1].request.content)
+    assert first_body["temperature"] == 0.2
+    assert "temperature" not in retry_body
+
+
+@respx.mock
+async def test_chat_completion_does_not_retry_on_an_unrelated_400():
+    respx.post("http://fake-owui.test/api/v1/chat/completions").mock(
+        return_value=Response(400, json={"detail": "Model not found"})
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+    with pytest.raises(OwuiError):
+        await client.chat_completion(model="nope", messages=[{"role": "user", "content": "hi"}])
+
+
+@respx.mock
 async def test_chat_completion_wraps_transport_errors_as_owui_error():
     """A slow model or a dead Open WebUI instance raises an httpx transport
     error (timeout, connect failure) — this must surface as a clean

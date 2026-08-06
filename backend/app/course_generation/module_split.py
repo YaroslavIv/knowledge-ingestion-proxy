@@ -44,15 +44,28 @@ def build_prompt(
     feedback_notes: list[str],
     target_audience: str,
     language: str,
+    existing_modules: list[dict] | None = None,
 ) -> str:
     files_block = "\n\n".join(f"### {f['filename']}\n{f['excerpt']}" for f in product_files) or "(no files)"
     feedback_block = "\n".join(f"- {n}" for n in feedback_notes) if feedback_notes else "(none yet)"
+
+    existing_block = ""
+    if existing_modules:
+        listed = "\n".join(
+            f"- {m['title']}: {', '.join(m.get('learning_objectives') or []) or '(no objectives listed)'}"
+            for m in existing_modules
+        )
+        existing_block = f"""
+MODULES ALREADY IN THIS COURSE (proposed or approved — do not duplicate or re-propose their content;
+design new modules that complement them, covering material they don't already cover):
+{listed}
+"""
 
     return f"""Propose a module breakdown for a {target_audience} onboarding course, written in {language}.
 
 METHODOLOGY AND STRUCTURAL RULES (follow these):
 {methodology_text or "(no methodology notes provided)"}
-
+{existing_block}
 KNOWN PAST MISTAKES TO AVOID (from previous course reviews — do not repeat these):
 {feedback_block}
 
@@ -77,8 +90,9 @@ async def propose_modules(
     feedback_notes: list[str],
     target_audience: str = "sales",
     language: str = "en",
+    existing_modules: list[dict] | None = None,
 ) -> list[dict]:
-    prompt = build_prompt(product_files, methodology_text, feedback_notes, target_audience, language)
+    prompt = build_prompt(product_files, methodology_text, feedback_notes, target_audience, language, existing_modules=existing_modules)
     raw = await client.chat_completion(
         model=model,
         messages=[

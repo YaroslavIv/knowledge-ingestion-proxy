@@ -167,27 +167,17 @@ class OwuiClient:
         # bubbling up as an unhandled 500.
         try:
             async with httpx.AsyncClient(base_url=self._base_url, timeout=300) as client:
-                resp = await client.post(
-                    "/api/v1/chat/completions",
-                    headers=self._headers(),
-                    json=body,
-                )
-                if resp.status_code == 405 or (
-                    resp.status_code == 200 and "application/json" not in resp.headers.get("content-type", "")
-                ):
-                    # Confirmed live: this corporate instance's /api/v1/*
-                    # OpenAI-compatibility routes can go stale/break
-                    # independently of the rest of the API — the exact same
-                    # symptom already seen on /api/v1/models and
-                    # /api/v1/knowledge/{id}/files (see list_models and
-                    # list_knowledge_files above). /api/chat/completions (no
-                    # v1) is Open WebUI's own native chat endpoint and works
-                    # reliably there.
-                    resp = await client.post(
-                        "/api/chat/completions",
-                        headers=self._headers(),
-                        json=body,
-                    )
+                resp = await self._post_chat_completion(client, body)
+                if resp.status_code == 400 and self._mentions_temperature(resp):
+                    # Some newer reasoning-style models (GPT-5-class and
+                    # similar) reject any non-default temperature at all via
+                    # the OpenAI-compatible API — confirmed by the error
+                    # text itself naming the parameter. Retrying once with it
+                    # omitted entirely beats failing the whole
+                    # generation/revision call outright over a parameter
+                    # this proxy doesn't actually need to control.
+                    retry_body = {k: v for k, v in body.items() if k != "temperature"}
+                    resp = await self._post_chat_completion(client, retry_body)
                 self._raise_for_status(resp)
                 data = resp.json()
                 if return_raw:
@@ -195,6 +185,37 @@ class OwuiClient:
                 return data["choices"][0]["message"]["content"]
         except httpx.HTTPError as e:
             raise OwuiError(status_code=502, detail=f"Request to Open WebUI failed: {e}") from e
+
+    async def _post_chat_completion(self, client: httpx.AsyncClient, body: dict) -> httpx.Response:
+        resp = await client.post(
+            "/api/v1/chat/completions",
+            headers=self._headers(),
+            json=body,
+        )
+        if resp.status_code == 405 or (
+            resp.status_code == 200 and "application/json" not in resp.headers.get("content-type", "")
+        ):
+            # Confirmed live: this corporate instance's /api/v1/*
+            # OpenAI-compatibility routes can go stale/break independently
+            # of the rest of the API — the exact same symptom already seen
+            # on /api/v1/models and /api/v1/knowledge/{id}/files (see
+            # list_models and list_knowledge_files above). /api/chat/completions
+            # (no v1) is Open WebUI's own native chat endpoint and works
+            # reliably there.
+            resp = await client.post(
+                "/api/chat/completions",
+                headers=self._headers(),
+                json=body,
+            )
+        return resp
+
+    @staticmethod
+    def _mentions_temperature(resp: httpx.Response) -> bool:
+        try:
+            detail = resp.json().get("detail", resp.text)
+        except Exception:  # noqa: BLE001
+            detail = resp.text
+        return "temperature" in str(detail).lower()
 
     async def upload_file_to_knowledge(
         self, filename: str, content: str, knowledge_id: str

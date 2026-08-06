@@ -1,9 +1,12 @@
 <script>
   import {
+    addCourseCompetitor,
+    addCourseInstructions,
     addCourseMaterial,
     approveCourseModule,
     authHeaders,
     bumpOutputVersion,
+    clearCourseVisual,
     createCourseModule,
     deleteCourseModule,
     deleteCourseProject,
@@ -21,8 +24,11 @@
     listModuleOutputVersions,
     publishModuleOutput,
     rejectCourseModule,
+    removeCourseCompetitor,
+    removeCourseInstructions,
     removeCourseMaterial,
     seedCourseFeedback,
+    setCourseVisual,
     splitCourseIntoModules,
     updateCourseModule,
   } from "./api.js";
@@ -78,24 +84,49 @@
 
   // --- collections this project is built from (what they're for, what version) ---
   let collectionDetails = $state({}); // knowledgeId -> {name, version_tag, ...} | {error}
+  let allKnowledgeBases = $state(null);
 
-  const collectionRoles = $derived(
+  // Product/competitors/instructions can each span several collections — one
+  // shared add/remove UI, parameterized per role, instead of three copies.
+  const multiCollectionRoles = $derived(
     project
       ? [
           {
+            key: "product",
+            label: "Product Material",
+            description:
+              "Raw product material — datasheets, specs, positioning. Reusable for other tasks; not course-specific. Can span several collections.",
+            emptyLabel: "No product collections yet",
+            ids: project.product_knowledge_ids ?? [],
+            add: (kb) => addCourseMaterial(projectId, kb.id),
+            remove: (id) => removeCourseMaterial(projectId, id),
+          },
+          {
             key: "competitors",
             label: "Competitors",
-            description: "Competitive intelligence — competitor brochures and positioning. Optional.",
-            knowledgeId: project.competitors_knowledge_id,
+            description: "Competitive intelligence — competitor brochures and positioning. Optional, can span several collections.",
             emptyLabel: "Not used for this course",
+            ids: project.competitors_knowledge_ids ?? [],
+            add: (kb) => addCourseCompetitor(projectId, kb.id),
+            remove: (id) => removeCourseCompetitor(projectId, id),
           },
           {
             key: "instructions",
             label: "Instructions",
-            description: "Course-generation methodology and accumulated review feedback — specific to how this course is built, kept separate from reusable product material.",
-            knowledgeId: project.instructions_knowledge_id,
-            emptyLabel: "Not set",
+            description:
+              "Course-generation methodology and accumulated review feedback — specific to how this course is built, kept separate from reusable product material. Can span several collections.",
+            emptyLabel: "No instructions collections yet",
+            ids: project.instructions_knowledge_ids ?? [],
+            add: (kb) => addCourseInstructions(projectId, kb.id),
+            remove: (id) => removeCourseInstructions(projectId, id),
           },
+        ]
+      : [],
+  );
+
+  const singleCollectionRoles = $derived(
+    project
+      ? [
           {
             key: "output",
             label: "Output",
@@ -111,8 +142,9 @@
     if (!project) return;
     const ids = [
       ...(project.product_knowledge_ids ?? []),
-      project.competitors_knowledge_id,
-      project.instructions_knowledge_id,
+      ...(project.competitors_knowledge_ids ?? []),
+      ...(project.instructions_knowledge_ids ?? []),
+      project.visual_knowledge_id,
       project.output_knowledge_id,
     ].filter(Boolean);
     const results = await Promise.all(
@@ -121,15 +153,7 @@
     collectionDetails = Object.fromEntries(results);
   }
 
-  // --- product material: possibly several collections, add/remove ---
-  let addingMaterial = $state(false);
-  let allKnowledgeBases = $state(null);
-  let materialQuery = $state("");
-  let materialBusy = $state(false);
-
-  async function openAddMaterial() {
-    addingMaterial = true;
-    materialQuery = "";
+  async function ensureAllKnowledgeBasesLoaded() {
     if (allKnowledgeBases === null) {
       try {
         allKnowledgeBases = await listKnowledgeBases();
@@ -139,36 +163,95 @@
     }
   }
 
-  const materialCandidates = $derived(
-    (allKnowledgeBases ?? [])
-      .filter((kb) => !(project?.product_knowledge_ids ?? []).includes(kb.id))
-      .filter((kb) => !materialQuery || kb.name.toLowerCase().includes(materialQuery.toLowerCase())),
+  // --- multi-collection roles (product/competitors/instructions): add/remove ---
+  let addingRoleKey = $state(null);
+  let roleQuery = $state("");
+  let roleBusy = $state(false);
+
+  async function openAddForRole(key) {
+    addingRoleKey = key;
+    roleQuery = "";
+    await ensureAllKnowledgeBasesLoaded();
+  }
+
+  const roleCandidates = $derived(
+    (() => {
+      const role = multiCollectionRoles.find((r) => r.key === addingRoleKey);
+      if (!role) return [];
+      return (allKnowledgeBases ?? [])
+        .filter((kb) => !role.ids.includes(kb.id))
+        .filter((kb) => !roleQuery || kb.name.toLowerCase().includes(roleQuery.toLowerCase()));
+    })(),
   );
 
-  async function confirmAddMaterial(kb) {
-    materialBusy = true;
+  async function confirmAddForRole(kb) {
+    const role = multiCollectionRoles.find((r) => r.key === addingRoleKey);
+    if (!role) return;
+    roleBusy = true;
     error = null;
     try {
-      project = await addCourseMaterial(projectId, kb.id);
-      addingMaterial = false;
+      project = await role.add(kb);
+      addingRoleKey = null;
       await loadCollectionDetails();
     } catch (e) {
       error = e.message;
     } finally {
-      materialBusy = false;
+      roleBusy = false;
     }
   }
 
-  async function confirmRemoveMaterial(knowledgeId) {
-    materialBusy = true;
+  async function confirmRemoveForRole(role, knowledgeId) {
+    roleBusy = true;
     error = null;
     try {
-      project = await removeCourseMaterial(projectId, knowledgeId);
+      project = await role.remove(knowledgeId);
       await loadCollectionDetails();
     } catch (e) {
       error = e.message;
     } finally {
-      materialBusy = false;
+      roleBusy = false;
+    }
+  }
+
+  // --- visual style collection: single, settable/replaceable/clearable ---
+  let addingVisual = $state(false);
+  let visualQuery = $state("");
+  let visualBusy = $state(false);
+
+  async function openSetVisual() {
+    addingVisual = true;
+    visualQuery = "";
+    await ensureAllKnowledgeBasesLoaded();
+  }
+
+  const visualCandidates = $derived(
+    (allKnowledgeBases ?? []).filter((kb) => !visualQuery || kb.name.toLowerCase().includes(visualQuery.toLowerCase())),
+  );
+
+  async function confirmSetVisual(kb) {
+    visualBusy = true;
+    error = null;
+    try {
+      project = await setCourseVisual(projectId, kb.id);
+      addingVisual = false;
+      await loadCollectionDetails();
+    } catch (e) {
+      error = e.message;
+    } finally {
+      visualBusy = false;
+    }
+  }
+
+  async function confirmClearVisual() {
+    visualBusy = true;
+    error = null;
+    try {
+      project = await clearCourseVisual(projectId);
+      await loadCollectionDetails();
+    } catch (e) {
+      error = e.message;
+    } finally {
+      visualBusy = false;
     }
   }
 
@@ -300,6 +383,7 @@
   let publishingModuleId = $state(null);
   let publishNotes = $state("");
   let publishFile = $state(null);
+  let publishBusy = $state(false);
   let openVersionsModuleId = $state(null);
   let versionsByModule = $state({});
 
@@ -338,6 +422,8 @@
 
   async function confirmPublish(m) {
     if (!publishFile) return;
+    publishBusy = true;
+    error = null;
     try {
       await publishModuleOutput(projectId, m.id, publishFile, publishNotes);
       modules = await listCourseModules(projectId);
@@ -347,6 +433,8 @@
       if (openVersionsModuleId === m.id) versionsByModule = { ...versionsByModule, [m.id]: await listModuleOutputVersions(projectId, m.id) };
     } catch (e) {
       error = e.message;
+    } finally {
+      publishBusy = false;
     }
   }
 
@@ -393,10 +481,24 @@
   let generateModel = $state("");
   let generateInstruction = $state("");
   let generateBusy = $state(false);
-  // A brand-new module (e.g. a final test) may need to know what the other
-  // modules actually cover, not just raw product material — opt in to pull
-  // their real generated content into the prompt. Ignored when revising.
-  let generateIncludeOtherModules = $state(false);
+  // Which collections of each role to actually draw from for this call —
+  // prefilled to "everything the project currently has" so this new
+  // scoping UI never starts out giving the model less context than the old
+  // all-or-nothing behavior did.
+  let selectedProductIds = $state([]);
+  let selectedCompetitorIds = $state([]);
+  let selectedInstructionsIds = $state([]);
+  let includeVisual = $state(true);
+  // Which sibling modules' actual generated content to ground this call in
+  // — title+objectives of every sibling are always sent regardless (see
+  // backend), this only controls whether their full lecture text is too.
+  // Applies identically to generating from scratch and revising.
+  let selectedOtherModuleIds = $state([]);
+  // An explicit sibling module to copy visual style from — independent of
+  // the content selection above. Empty falls back to the project's visual
+  // collection, then (only for a from-scratch generation with neither) the
+  // old "borrow the first sibling found" behavior.
+  let styleReferenceModuleId = $state("");
   // For a module that already exists but came out unusable (wrong layout,
   // colors, whatever) — small find/replace edits can't fix that, so this
   // discards the current version's content and does a full from-scratch
@@ -406,28 +508,40 @@
   // banner up top — that one's easy to miss when the module you're
   // generating for is scrolled far down the list.
   let generateError = $state(null);
-  // What this exact call will pull in — always fetched fresh from the
-  // collections (see backend's generate_output), never toggled off, so this
-  // is a transparent preview, not a set of options that change what gets
-  // sent. null while loading, so the panel can show "checking…" instead of
-  // a misleading empty list.
+  // What this exact call *could* pull in — fetched fresh from the
+  // collections (see backend's generate_output) every time this form
+  // opens, so the checkboxes below always reflect real, current content
+  // rather than a stale guess. null while loading, so the panel can show
+  // "checking…" instead of a misleading empty list.
   let generationContext = $state(null);
   let generationContextError = $state(null);
+
+  const otherModulesForGenerate = $derived(modules.filter((m) => m.id !== generatingModuleId));
 
   async function startGenerate(m) {
     generatingModuleId = m.id;
     generateModel = generateModel || selectedModel || defaultModelId(models);
     generateInstruction = "";
-    generateIncludeOtherModules = false;
     generateRegenerateFromScratch = false;
     generateError = null;
     generationContext = null;
     generationContextError = null;
     try {
       generationContext = await getGenerationContext(projectId, m.id);
+      const saved = m.last_generation_settings;
+      selectedProductIds = saved?.product_knowledge_ids ?? generationContext.product_files.map((f) => f.knowledge_id);
+      selectedCompetitorIds = saved?.competitor_knowledge_ids ?? generationContext.competitor_files.map((f) => f.knowledge_id);
+      selectedInstructionsIds = saved?.instructions_knowledge_ids ?? generationContext.instructions_files.map((f) => f.knowledge_id);
+      includeVisual = saved?.include_visual ?? true;
+      selectedOtherModuleIds = saved?.other_module_ids ?? [];
+      styleReferenceModuleId = saved?.style_reference_module_id ?? "";
     } catch (e) {
       generationContextError = e.message;
     }
+  }
+
+  function toggleSelected(list, id) {
+    return list.includes(id) ? list.filter((i) => i !== id) : [...list, id];
   }
 
   async function confirmGenerate(m) {
@@ -437,7 +551,12 @@
     error = null;
     try {
       await generateModuleOutput(projectId, m.id, generateModel, generateInstruction.trim(), {
-        includeOtherModules: generateIncludeOtherModules,
+        productKnowledgeIds: selectedProductIds,
+        competitorKnowledgeIds: selectedCompetitorIds,
+        instructionsKnowledgeIds: selectedInstructionsIds,
+        includeVisual,
+        otherModuleIds: selectedOtherModuleIds,
+        styleReferenceModuleId: styleReferenceModuleId || null,
         regenerateFromScratch: generateRegenerateFromScratch,
       });
       modules = await listCourseModules(projectId);
@@ -493,6 +612,13 @@
   }
 </script>
 
+{#snippet spinner()}
+  <svg class="animate-spin size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V4a8 8 0 00-8 8h0z"></path>
+  </svg>
+{/snippet}
+
 <div class="flex flex-col gap-3">
   <div class="flex items-center gap-2 px-1">
     <button type="button" aria-label="Back to Courses" class="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-850 transition" onclick={onBack}>
@@ -543,76 +669,155 @@
   <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100/30 dark:border-gray-850/30 p-3 flex flex-col gap-2">
     <div class="text-sm font-medium">Collections</div>
 
-    <!-- Product Material — possibly several collections, unlike the single-collection roles below -->
-    <div class="flex flex-col gap-1.5 text-xs">
-      <div class="flex items-center justify-between flex-wrap gap-1">
-        <div class="flex flex-col gap-0.5">
-          <span class="text-sm font-medium">Product Material</span>
-          <span class="text-gray-500">Raw product material — datasheets, specs, positioning. Reusable for other tasks; not course-specific. Can span several collections.</span>
+    <!-- Product/Competitors/Instructions — each can span several collections -->
+    {#each multiCollectionRoles as role, ri (role.key)}
+      <div class="flex flex-col gap-1.5 text-xs {ri > 0 ? 'border-t border-gray-100 dark:border-gray-850 pt-2' : ''}">
+        <div class="flex items-center justify-between flex-wrap gap-1">
+          <div class="flex flex-col gap-0.5">
+            <span class="text-sm font-medium">{role.label}</span>
+            <span class="text-gray-500">{role.description}</span>
+          </div>
+          <button
+            type="button"
+            class="text-xs px-2.5 py-1 rounded-full border border-gray-200 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-850 transition shrink-0"
+            onclick={() => openAddForRole(role.key)}
+          >
+            + Add collection
+          </button>
         </div>
+        {#each role.ids as knowledgeId (knowledgeId)}
+          <div class="flex items-center gap-2 pl-2">
+            <span class="text-gray-500 truncate flex-1">{collectionDetails[knowledgeId]?.name ?? knowledgeId}</span>
+            {#if collectionDetails[knowledgeId]?.version_tag}
+              <span class="font-mono px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-850">{collectionDetails[knowledgeId].version_tag}</span>
+            {/if}
+            <button
+              type="button"
+              class="underline text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 shrink-0"
+              onclick={() => onOpenKnowledgeCollection(knowledgeId, collectionDetails[knowledgeId]?.name ?? knowledgeId)}
+            >
+              Open
+            </button>
+            <button
+              type="button"
+              class="underline text-gray-500 hover:text-red-600 dark:hover:text-red-400 shrink-0 disabled:opacity-40"
+              disabled={roleBusy}
+              onclick={() => confirmRemoveForRole(role, knowledgeId)}
+            >
+              Remove
+            </button>
+          </div>
+        {:else}
+          <div class="pl-2 text-gray-400">{role.emptyLabel}</div>
+        {/each}
+
+        {#if addingRoleKey === role.key}
+          <div class="flex flex-col gap-2 bg-gray-50 dark:bg-gray-850 rounded-lg p-2">
+            <input
+              class="text-xs px-2 py-1.5 rounded-lg bg-white dark:bg-gray-900 outline-hidden"
+              placeholder="Search knowledge bases…"
+              bind:value={roleQuery}
+            />
+            {#if allKnowledgeBases === null}
+              <div class="text-gray-500 py-1">Loading…</div>
+            {:else if roleCandidates.length === 0}
+              <div class="text-gray-500 py-1">Nothing left to add.</div>
+            {:else}
+              <div class="flex flex-col max-h-48 overflow-y-auto">
+                {#each roleCandidates as kb (kb.id)}
+                  <button
+                    type="button"
+                    class="text-left px-2 py-1 rounded-lg hover:bg-white dark:hover:bg-gray-900 disabled:opacity-40"
+                    disabled={roleBusy}
+                    onclick={() => confirmAddForRole(kb)}
+                  >
+                    {kb.name}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+            <button type="button" class="text-gray-500 self-start" onclick={() => (addingRoleKey = null)}>Cancel</button>
+          </div>
+        {/if}
+      </div>
+    {/each}
+
+    <!-- Visual style — single collection, unlike the roles above -->
+    <div class="flex items-center gap-3 text-xs border-t border-gray-100 dark:border-gray-850 pt-2">
+      <div class="flex flex-col gap-0.5 flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-sm font-medium">Visual style</span>
+          {#if project?.visual_knowledge_id}
+            <span class="text-gray-500 truncate">{collectionDetails[project.visual_knowledge_id]?.name ?? ""}</span>
+            {#if collectionDetails[project.visual_knowledge_id]?.version_tag}
+              <span class="font-mono px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-850">
+                {collectionDetails[project.visual_knowledge_id].version_tag}
+              </span>
+            {/if}
+          {/if}
+        </div>
+        <span class="text-gray-500">
+          Style template for the generated HTML's look (colors, fonts, layout, components) — literal HTML/CSS to
+          reuse, or written style rules. Optional, one collection; the primary source of visual style once set.
+        </span>
+      </div>
+      {#if project?.visual_knowledge_id}
+        <button
+          type="button"
+          class="underline text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 shrink-0"
+          onclick={() => onOpenKnowledgeCollection(project.visual_knowledge_id, collectionDetails[project.visual_knowledge_id]?.name ?? "Visual style")}
+        >
+          Open
+        </button>
+        <button type="button" class="underline text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 shrink-0" onclick={openSetVisual}>Change</button>
+        <button
+          type="button"
+          class="underline text-gray-500 hover:text-red-600 dark:hover:text-red-400 shrink-0 disabled:opacity-40"
+          disabled={visualBusy}
+          onclick={confirmClearVisual}
+        >
+          Clear
+        </button>
+      {:else}
         <button
           type="button"
           class="text-xs px-2.5 py-1 rounded-full border border-gray-200 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-850 transition shrink-0"
-          onclick={openAddMaterial}
+          onclick={openSetVisual}
         >
-          + Add collection
+          + Set collection
         </button>
-      </div>
-      {#each project?.product_knowledge_ids ?? [] as knowledgeId (knowledgeId)}
-        <div class="flex items-center gap-2 pl-2">
-          <span class="text-gray-500 truncate flex-1">{collectionDetails[knowledgeId]?.name ?? knowledgeId}</span>
-          {#if collectionDetails[knowledgeId]?.version_tag}
-            <span class="font-mono px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-850">{collectionDetails[knowledgeId].version_tag}</span>
-          {/if}
-          <button
-            type="button"
-            class="underline text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 shrink-0"
-            onclick={() => onOpenKnowledgeCollection(knowledgeId, collectionDetails[knowledgeId]?.name ?? knowledgeId)}
-          >
-            Open
-          </button>
-          <button
-            type="button"
-            class="underline text-gray-500 hover:text-red-600 dark:hover:text-red-400 shrink-0 disabled:opacity-40"
-            disabled={materialBusy}
-            onclick={() => confirmRemoveMaterial(knowledgeId)}
-          >
-            Remove
-          </button>
-        </div>
-      {/each}
-
-      {#if addingMaterial}
-        <div class="flex flex-col gap-2 bg-gray-50 dark:bg-gray-850 rounded-lg p-2">
-          <input
-            class="text-xs px-2 py-1.5 rounded-lg bg-white dark:bg-gray-900 outline-hidden"
-            placeholder="Search knowledge bases…"
-            bind:value={materialQuery}
-          />
-          {#if allKnowledgeBases === null}
-            <div class="text-gray-500 py-1">Loading…</div>
-          {:else if materialCandidates.length === 0}
-            <div class="text-gray-500 py-1">Nothing left to add.</div>
-          {:else}
-            <div class="flex flex-col max-h-48 overflow-y-auto">
-              {#each materialCandidates as kb (kb.id)}
-                <button
-                  type="button"
-                  class="text-left px-2 py-1 rounded-lg hover:bg-white dark:hover:bg-gray-900 disabled:opacity-40"
-                  disabled={materialBusy}
-                  onclick={() => confirmAddMaterial(kb)}
-                >
-                  {kb.name}
-                </button>
-              {/each}
-            </div>
-          {/if}
-          <button type="button" class="text-gray-500 self-start" onclick={() => (addingMaterial = false)}>Cancel</button>
-        </div>
       {/if}
     </div>
+    {#if addingVisual}
+      <div class="flex flex-col gap-2 bg-gray-50 dark:bg-gray-850 rounded-lg p-2 text-xs">
+        <input
+          class="text-xs px-2 py-1.5 rounded-lg bg-white dark:bg-gray-900 outline-hidden"
+          placeholder="Search knowledge bases…"
+          bind:value={visualQuery}
+        />
+        {#if allKnowledgeBases === null}
+          <div class="text-gray-500 py-1">Loading…</div>
+        {:else if visualCandidates.length === 0}
+          <div class="text-gray-500 py-1">No knowledge bases found.</div>
+        {:else}
+          <div class="flex flex-col max-h-48 overflow-y-auto">
+            {#each visualCandidates as kb (kb.id)}
+              <button
+                type="button"
+                class="text-left px-2 py-1 rounded-lg hover:bg-white dark:hover:bg-gray-900 disabled:opacity-40"
+                disabled={visualBusy}
+                onclick={() => confirmSetVisual(kb)}
+              >
+                {kb.name}
+              </button>
+            {/each}
+          </div>
+        {/if}
+        <button type="button" class="text-gray-500 self-start" onclick={() => (addingVisual = false)}>Cancel</button>
+      </div>
+    {/if}
 
-    {#each collectionRoles as role (role.key)}
+    {#each singleCollectionRoles as role (role.key)}
       <div class="flex items-center gap-3 text-xs border-t border-gray-100 dark:border-gray-850 pt-2">
         <div class="flex flex-col gap-0.5 flex-1 min-w-0">
           <div class="flex items-center gap-2 flex-wrap">
@@ -695,7 +900,8 @@
         {#each models as m}<option value={m.id}>{m.name || m.id}</option>{/each}
       </select>
     </div>
-    <button type="button" class="primary px-4" disabled={splitting || !selectedModel} onclick={handleSplit}>
+    <button type="button" class="primary px-4 flex items-center gap-1.5" disabled={splitting || !selectedModel} onclick={handleSplit}>
+      {#if splitting}{@render spinner()}{/if}
       {splitting ? "Proposing modules…" : "Propose module breakdown"}
     </button>
     <span class="text-xs text-gray-500">Adds newly proposed modules — never touches ones already approved.</span>
@@ -812,13 +1018,24 @@
 
           {#if publishingModuleId === m.id}
             <div class="flex flex-col gap-1.5 bg-gray-50 dark:bg-gray-850 rounded-lg p-2">
-              <input type="file" onchange={handleFilePicked} />
-              <input class="text-xs px-2 py-1 rounded-lg bg-white dark:bg-gray-900 outline-hidden" placeholder="What changed in this version? (optional)" bind:value={publishNotes} />
-              <div class="flex gap-1.5">
-                <button type="button" class="text-xs px-2 py-1 rounded-lg bg-black text-white dark:bg-white dark:text-black" disabled={!publishFile} onclick={() => confirmPublish(m)}>
-                  Publish
+              <input type="file" disabled={publishBusy} onchange={handleFilePicked} />
+              <input
+                class="text-xs px-2 py-1 rounded-lg bg-white dark:bg-gray-900 outline-hidden disabled:opacity-50"
+                placeholder="What changed in this version? (optional)"
+                disabled={publishBusy}
+                bind:value={publishNotes}
+              />
+              <div class="flex gap-1.5 items-center">
+                <button
+                  type="button"
+                  class="flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg bg-black text-white dark:bg-white dark:text-black disabled:opacity-60"
+                  disabled={!publishFile || publishBusy}
+                  onclick={() => confirmPublish(m)}
+                >
+                  {#if publishBusy}{@render spinner()}{/if}
+                  {publishBusy ? "Uploading…" : "Publish"}
                 </button>
-                <button type="button" class="text-xs px-2 py-1 rounded-lg" onclick={() => (publishingModuleId = null)}>Cancel</button>
+                <button type="button" class="text-xs px-2 py-1 rounded-lg" disabled={publishBusy} onclick={() => (publishingModuleId = null)}>Cancel</button>
               </div>
             </div>
           {/if}
@@ -826,53 +1043,89 @@
           {#if generatingModuleId === m.id}
             <div class="flex flex-col gap-1.5 bg-gray-50 dark:bg-gray-850 rounded-lg p-2">
               <div class="text-xs px-2 py-1.5 rounded-lg bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
-                <div class="font-medium text-gray-500 mb-1">This will pull in:</div>
+                <div class="font-medium text-gray-500 mb-1">Scope this call — pick which collections to draw from:</div>
                 {#if generationContextError}
                   <p class="text-red-500">{generationContextError}</p>
                 {:else if generationContext === null}
                   <p class="text-gray-400 animate-pulse">Checking collections…</p>
                 {:else}
-                  <ul class="flex flex-col gap-0.5 text-gray-600 dark:text-gray-400">
-                    <li>
-                      Product material ({generationContext.product_files.length} collection{generationContext.product_files.length === 1 ? "" : "s"}):
+                  <div class="flex flex-col gap-2 text-gray-600 dark:text-gray-400">
+                    <div>
+                      <div class="font-medium">Product material</div>
                       {#if generationContext.product_files.length === 0}
-                        none
+                        <div class="pl-2 text-gray-400">none</div>
                       {:else}
-                        <ul class="pl-4 list-disc">
-                          {#each generationContext.product_files as group (group.knowledge_id)}
-                            <li>
-                              {group.knowledge_name} — {group.filenames.length} file{group.filenames.length === 1 ? "" : "s"}{group.filenames.length
-                                ? `: ${group.filenames.join(", ")}`
-                                : ""}
-                            </li>
-                          {/each}
-                        </ul>
+                        {#each generationContext.product_files as group (group.knowledge_id)}
+                          <label class="flex items-center gap-1.5 pl-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedProductIds.includes(group.knowledge_id)}
+                              onchange={() => (selectedProductIds = toggleSelected(selectedProductIds, group.knowledge_id))}
+                            />
+                            {group.knowledge_name} ({group.filenames.length} file{group.filenames.length === 1 ? "" : "s"})
+                          </label>
+                        {/each}
                       {/if}
-                    </li>
-                    <li>
-                      Instructions/methodology ({generationContext.instructions_files.length} file{generationContext.instructions_files.length === 1 ? "" : "s"}):
-                      {generationContext.instructions_files.join(", ") || "none"}
-                    </li>
-                    <li>
+                    </div>
+                    {#if generationContext.competitor_files.length > 0}
+                      <div>
+                        <div class="font-medium">Competitors</div>
+                        {#each generationContext.competitor_files as group (group.knowledge_id)}
+                          <label class="flex items-center gap-1.5 pl-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedCompetitorIds.includes(group.knowledge_id)}
+                              onchange={() => (selectedCompetitorIds = toggleSelected(selectedCompetitorIds, group.knowledge_id))}
+                            />
+                            {group.knowledge_name} ({group.filenames.length} file{group.filenames.length === 1 ? "" : "s"})
+                          </label>
+                        {/each}
+                      </div>
+                    {/if}
+                    <div>
+                      <div class="font-medium">Instructions/methodology</div>
+                      {#if generationContext.instructions_files.length === 0}
+                        <div class="pl-2 text-gray-400">none</div>
+                      {:else}
+                        {#each generationContext.instructions_files as group (group.knowledge_id)}
+                          <label class="flex items-center gap-1.5 pl-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedInstructionsIds.includes(group.knowledge_id)}
+                              onchange={() => (selectedInstructionsIds = toggleSelected(selectedInstructionsIds, group.knowledge_id))}
+                            />
+                            {group.knowledge_name} ({group.filenames.length} file{group.filenames.length === 1 ? "" : "s"})
+                          </label>
+                        {/each}
+                      {/if}
+                    </div>
+                    {#if generationContext.visual_present}
+                      <label class="flex items-center gap-1.5">
+                        <input type="checkbox" bind:checked={includeVisual} />
+                        Use the project's visual style collection
+                      </label>
+                    {/if}
+                    <div>
                       {generationContext.feedback_notes_count} past-feedback note{generationContext.feedback_notes_count === 1 ? "" : "s"}
-                      <span class="text-gray-400">(stored in this proxy, not a knowledge-base collection)</span>
-                    </li>
+                      <span class="text-gray-400">(stored in this proxy, not a knowledge-base collection — always included)</span>
+                    </div>
                     {#if generationContext.has_current_version}
-                      <li>
+                      <div>
                         The module's current page — {generateRegenerateFromScratch
                           ? "will be discarded (regenerating from scratch)"
                           : "will be revised in place via targeted edits"}
-                      </li>
+                      </div>
                     {/if}
-                  </ul>
+                  </div>
                 {/if}
               </div>
-              <select class="text-xs px-2 py-1.5 rounded-lg bg-white dark:bg-gray-900 outline-hidden" bind:value={generateModel}>
+              <select class="text-xs px-2 py-1.5 rounded-lg bg-white dark:bg-gray-900 outline-hidden disabled:opacity-50" disabled={generateBusy} bind:value={generateModel}>
                 {#each models as mo}<option value={mo.id}>{mo.name || mo.id}</option>{/each}
               </select>
               <textarea
-                class="text-xs px-2 py-1.5 rounded-lg bg-white dark:bg-gray-900 outline-hidden"
+                class="text-xs px-2 py-1.5 rounded-lg bg-white dark:bg-gray-900 outline-hidden disabled:opacity-50"
                 rows="3"
+                disabled={generateBusy}
                 placeholder={m.current_output_version && !generateRegenerateFromScratch
                   ? "Describe the change, e.g. 'Add two more practice exercises' or 'Restyle the interactive blocks to use a blue accent color'"
                   : "Describe what this module's lecture page should cover — used together with the product material and methodology"}
@@ -880,27 +1133,62 @@
               ></textarea>
               {#if m.current_output_version}
                 <label class="flex items-center gap-1.5 text-xs text-gray-500">
-                  <input type="checkbox" bind:checked={generateRegenerateFromScratch} />
+                  <input type="checkbox" disabled={generateBusy} bind:checked={generateRegenerateFromScratch} />
                   Regenerate from scratch instead of revising (use if this module came out broken/unstyled — discards
                   its current content and rewrites it fully; the old version is kept in history)
                 </label>
               {/if}
-              {#if !m.current_output_version || generateRegenerateFromScratch}
-                <label class="flex items-center gap-1.5 text-xs text-gray-500">
-                  <input type="checkbox" bind:checked={generateIncludeOtherModules} />
-                  Base this on the other modules' actual content (e.g. for a final test that should only quiz what's really in the course)
-                </label>
+
+              {#if otherModulesForGenerate.length > 0}
+                <div class="text-xs px-2 py-1.5 rounded-lg bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 flex flex-col gap-1.5">
+                  <div class="text-gray-500">
+                    Other modules whose actual content to draw on (e.g. a final test that should only quiz what's
+                    really in the course). Their title/objectives are always visible to the model regardless of
+                    this selection.
+                  </div>
+                  <div class="flex flex-col gap-0.5 max-h-28 overflow-y-auto">
+                    {#each otherModulesForGenerate as om (om.id)}
+                      <label class="flex items-center gap-1.5 text-gray-600 dark:text-gray-400">
+                        <input
+                          type="checkbox"
+                          disabled={generateBusy}
+                          checked={selectedOtherModuleIds.includes(om.id)}
+                          onchange={() => (selectedOtherModuleIds = toggleSelected(selectedOtherModuleIds, om.id))}
+                        />
+                        {om.title}
+                      </label>
+                    {/each}
+                  </div>
+                  <label class="flex flex-col gap-0.5 text-gray-500">
+                    Visual style template (copy another module's actual HTML look)
+                    <select
+                      class="text-xs px-2 py-1 rounded-lg bg-gray-50 dark:bg-gray-850 outline-hidden disabled:opacity-50"
+                      disabled={generateBusy}
+                      bind:value={styleReferenceModuleId}
+                    >
+                      <option value="">None (use visual collection, or auto for a from-scratch module)</option>
+                      {#each otherModulesForGenerate.filter((om) => om.current_output_version) as om (om.id)}
+                        <option value={om.id}>{om.title}</option>
+                      {/each}
+                    </select>
+                  </label>
+                </div>
               {/if}
+
               <div class="flex gap-1.5 items-center">
                 <button
                   type="button"
-                  class="text-xs px-2 py-1 rounded-lg bg-black text-white dark:bg-white dark:text-black disabled:opacity-40"
+                  class="flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg bg-black text-white dark:bg-white dark:text-black disabled:opacity-60"
                   disabled={generateBusy || !generateModel || !generateInstruction.trim()}
                   onclick={() => confirmGenerate(m)}
                 >
+                  {#if generateBusy}{@render spinner()}{/if}
                   {generateBusy ? "Generating…" : "Generate"}
                 </button>
                 <button type="button" class="text-xs px-2 py-1 rounded-lg" disabled={generateBusy} onclick={() => (generatingModuleId = null)}>Cancel</button>
+                {#if generateBusy}
+                  <span class="text-xs text-gray-400 animate-pulse">This can take a while for large modules — the model is writing the page now.</span>
+                {/if}
               </div>
               {#if generateError}
                 <p class="text-red-500 text-xs">{generateError}</p>

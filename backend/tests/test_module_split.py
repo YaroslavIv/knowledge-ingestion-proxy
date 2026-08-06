@@ -36,6 +36,26 @@ def test_build_prompt_handles_no_feedback_or_files():
     assert "(no files)" in prompt
 
 
+def test_build_prompt_lists_existing_modules_so_the_model_avoids_duplicating_them():
+    prompt = build_prompt(
+        [],
+        "",
+        [],
+        "sales",
+        "en",
+        existing_modules=[{"title": "Module 01 — Intro", "learning_objectives": ["Explain the basics"]}],
+    )
+    assert "MODULES ALREADY IN THIS COURSE" in prompt
+    assert "Module 01 — Intro" in prompt
+    assert "Explain the basics" in prompt
+    assert "do not duplicate" in prompt.lower()
+
+
+def test_build_prompt_omits_existing_modules_section_when_none_given():
+    prompt = build_prompt([], "", [], "sales", "en", existing_modules=[])
+    assert "MODULES ALREADY IN THIS COURSE" not in prompt
+
+
 @respx.mock
 async def test_propose_modules_parses_llm_json_response():
     respx.post("http://fake-owui.test/api/v1/chat/completions").mock(

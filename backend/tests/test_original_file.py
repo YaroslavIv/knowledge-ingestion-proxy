@@ -149,7 +149,7 @@ async def test_original_for_a_course_output_file_serves_its_current_html_not_owu
     project = (
         await client.post(
             "/api/courses",
-            json={"name": "Original Test Project", "product_knowledge_ids": ["kb-p"], "instructions_knowledge_id": "kb-i"},
+            json={"name": "Original Test Project", "product_knowledge_ids": ["kb-p"], "instructions_knowledge_ids": ["kb-i"]},
         )
     ).json()
     module = (

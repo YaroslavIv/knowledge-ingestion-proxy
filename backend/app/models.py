@@ -165,20 +165,27 @@ class CourseProject(Base):
     """One lecture-generation project — a product, its source collections,
     and the pedagogy/language it should be taught in.
 
-    product_knowledge_ids / competitors_knowledge_id / instructions_knowledge_id
+    product_knowledge_ids / competitors_knowledge_ids / instructions_knowledge_ids
     point at Open WebUI knowledge bases (competitors is optional — not every
     product has documented competitors). Kept separate on purpose: product
     material is reusable for other tasks (plain Q&A, support, etc.), while
-    the instructions collection (methodology + accumulated feedback) is
+    the instructions collections (methodology + accumulated feedback) are
     specific to "how do we build a lecture" and shouldn't pollute the
     product material with generation-only guidance.
 
-    product_knowledge_ids is a list (unlike the other, single-collection
-    roles here) — a product's material is often split across several
-    collections (e.g. datasheets in one, a separate one per sub-product),
-    and generation pulls files from all of them. See db.py's startup
-    migration for how this list is populated for projects created before it
-    became a list (back when this was a single product_knowledge_id).
+    All three are lists — a role's material is often split across several
+    collections (e.g. datasheets in one, a separate one per sub-product,
+    or several competitor dossiers), and generation pulls files from all of
+    them. See db.py's startup migration for how these lists are populated
+    for projects created before competitors/instructions became lists too
+    (back when each was a single *_knowledge_id).
+
+    visual_knowledge_id is deliberately singular, unlike the other three —
+    it's one style guide/template for the generated HTML's look (colors,
+    fonts, layout, components), not material to merge from several sources.
+    When set, it's the primary source of visual guidance for generation;
+    the older "borrow another module's HTML as a style example" fallback
+    (see generate_output) only kicks in when this is unset.
     """
 
     __tablename__ = "course_project"
@@ -186,8 +193,9 @@ class CourseProject(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String)
     product_knowledge_ids: Mapped[list] = mapped_column(JSON, default=list)
-    competitors_knowledge_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    instructions_knowledge_id: Mapped[str] = mapped_column(String)
+    competitors_knowledge_ids: Mapped[list] = mapped_column(JSON, default=list)
+    instructions_knowledge_ids: Mapped[list] = mapped_column(JSON, default=list)
+    visual_knowledge_id: Mapped[str | None] = mapped_column(String, nullable=True)
     pedagogy_version: Mapped[str] = mapped_column(String, default="v2")
     language: Mapped[str] = mapped_column(String, default="en")
     target_audience: Mapped[str] = mapped_column(String, default="sales")
@@ -227,6 +235,14 @@ class CourseModuleSpec(Base):
     # one of: proposed | approved | rejected
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # The exact scoping this module's last AI generate/revise call used —
+    # which collections it drew from, which sibling modules it saw, which
+    # module (if any) it copied visual style from. Prefilled into the
+    # generate/revise form next time, so a module that was deliberately
+    # scoped down (e.g. excluding a noisy collection) doesn't need that
+    # redone by hand on every revision. None until the first AI generation.
+    last_generation_settings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class CourseFeedbackNote(Base):

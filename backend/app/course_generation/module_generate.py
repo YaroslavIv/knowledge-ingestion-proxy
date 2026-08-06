@@ -16,6 +16,9 @@ Two shapes, chosen by whether a current output version already exists:
   live against a real 161KB module page. So revisions are expressed as a
   small set of exact find/replace edits instead, applied programmatically
   here — output size scales with the size of the change, not the document.
+  If those edits don't apply (a missing/ambiguous anchor), the model gets
+  one retry with its own error fed back before this falls back to a full
+  from-scratch rewrite, so a bad edit never just fails the whole call.
 """
 from __future__ import annotations
 
@@ -70,34 +73,113 @@ def apply_edits(current_html: str, edits: list[dict]) -> str:
     return html
 
 
+def _file_blocks(files: list[dict]) -> str:
+    """files: [{"filename", "content"}, ...] — the full text of each file,
+    no truncation. Content generation (unlike module-splitting, which only
+    needs to decide structure) must see everything, or it can't accurately
+    write about material past whatever an excerpt would have cut off."""
+    return "\n\n".join(f"### {f['filename']}\n{f['content']}" for f in files) or "(no files)"
+
+
+def _competitor_section(competitor_files: list[dict] | None) -> str:
+    if not competitor_files:
+        return ""
+    return f"""
+COMPETITIVE INTELLIGENCE (filename + content) — use this to sharpen positioning/differentiation
+where relevant, without inventing claims the material doesn't actually make:
+{_file_blocks(competitor_files)}
+"""
+
+
+def _visual_guidance_section(visual_guidance: str | None) -> str:
+    if not visual_guidance:
+        return ""
+    return f"""
+VISUAL/STYLE GUIDE FOR THIS COURSE — describes the intended look of the final HTML (colors, fonts,
+layout, components) for every module in this course. It may be literal HTML/CSS to reuse directly,
+or written style rules — either way, treat it as the primary source of truth for how the page
+should look:
+{visual_guidance}
+"""
+
+
+def _other_modules_sections(
+    other_modules: list[dict] | None, other_modules_content: list[dict] | None
+) -> tuple[str, str]:
+    other_modules_block = ""
+    if other_modules:
+        other_modules_block = "\n".join(
+            f"- {m['title']}: {', '.join(m.get('learning_objectives') or []) or '(no objectives listed)'}"
+            for m in other_modules
+        )
+    other_modules_section = (
+        f"""
+OTHER MODULES ALREADY IN THIS COURSE (for context and consistency — don't repeat their content,
+reference them by name if relevant):
+{other_modules_block or "(none yet)"}
+"""
+        if other_modules
+        else ""
+    )
+
+    other_modules_content_section = ""
+    if other_modules_content:
+        content_block = "\n\n".join(f"### {m['title']}\n{m['text']}" for m in other_modules_content)
+        other_modules_content_section = f"""
+ACTUAL CONTENT OF THE OTHER MODULES — use this to ground anything that must reflect what was really
+taught in this course (e.g. a final test/quiz module must only ask about material that actually
+appears here, not invented facts):
+{content_block}
+"""
+    return other_modules_section, other_modules_content_section
+
+
+def _style_reference_section(style_reference_html: str | None) -> str:
+    if not style_reference_html:
+        return ""
+    return f"""
+VISUAL STYLE TEMPLATE TO MATCH — this is the full HTML of another module already in this same
+course. Reuse its CSS/design system exactly: same colors, fonts, spacing, layout structure, and
+interactive components (accordions, quizzes, tabs, etc. — whatever pattern it uses). Do NOT reuse
+or reference its actual text/content, only its look, structure and conventions, so every module in
+the course feels like one consistent product:
+{style_reference_html}
+"""
+
+
 def build_generate_prompt(
     title: str,
     learning_objectives: list[str],
     current_html: str | None,
     instruction: str,
-    product_excerpts: list[dict],
+    product_files: list[dict],
     methodology_text: str,
     feedback_notes: list[str],
+    competitor_files: list[dict] | None = None,
+    visual_guidance: str | None = None,
     other_modules: list[dict] | None = None,
     other_modules_content: list[dict] | None = None,
     style_reference_html: str | None = None,
 ) -> str:
     feedback_block = "\n".join(f"- {n}" for n in feedback_notes) if feedback_notes else "(none yet)"
+    competitor_section = _competitor_section(competitor_files)
+    visual_section = _visual_guidance_section(visual_guidance)
+    other_modules_section, other_modules_content_section = _other_modules_sections(
+        other_modules, other_modules_content
+    )
+    style_reference_section = _style_reference_section(style_reference_html)
 
     if current_html:
         # Always included, for both a from-scratch write and a revise — a
         # revise that only ever saw its own previous HTML (not the actual
         # current collections) could keep citing facts the source material
         # no longer has, with nothing to ever correct that.
-        files_block = (
-            "\n\n".join(f"### {f['filename']}\n{f['excerpt']}" for f in product_excerpts) or "(no files)"
-        )
         materials_section = f"""
-CURRENT PRODUCT MATERIAL (filename + excerpt) — this is the collections' real content right now;
+CURRENT PRODUCT MATERIAL (filename + content) — this is the collections' real content right now;
 if it conflicts with something already written in the page below (e.g. material was since removed
 or corrected), prefer this and update the page accordingly, even if the requested change doesn't
 explicitly mention it:
-{files_block}
+{_file_blocks(product_files)}
 
 METHODOLOGY AND STRUCTURAL RULES:
 {methodology_text or "(no methodology notes provided)"}
@@ -109,7 +191,7 @@ returning the whole document.
 
 CURRENT VERSION (full HTML):
 {current_html}
-{materials_section}
+{materials_section}{competitor_section}{visual_section}{other_modules_section}{other_modules_content_section}{style_reference_section}
 KNOWN PAST MISTAKES TO AVOID (from previous course reviews):
 {feedback_block}
 
@@ -130,52 +212,18 @@ Rules:
 """
 
     objectives_block = "\n".join(f"- {o}" for o in learning_objectives) or "(none listed)"
-    files_block = "\n\n".join(f"### {f['filename']}\n{f['excerpt']}" for f in product_excerpts) or "(no files)"
-
-    other_modules_block = ""
-    if other_modules:
-        other_modules_block = "\n".join(
-            f"- {m['title']}: {', '.join(m.get('learning_objectives') or []) or '(no objectives listed)'}"
-            for m in other_modules
-        )
-    other_modules_section = f"""
-OTHER MODULES ALREADY IN THIS COURSE (for context and consistency — don't repeat their content,
-reference them by name if relevant):
-{other_modules_block or "(none yet)"}
-""" if other_modules else ""
-
-    other_modules_content_section = ""
-    if other_modules_content:
-        content_block = "\n\n".join(f"### {m['title']}\n{m['text']}" for m in other_modules_content)
-        other_modules_content_section = f"""
-ACTUAL CONTENT OF THE OTHER MODULES — use this to ground anything that must reflect what was really
-taught in this course (e.g. a final test/quiz module must only ask about material that actually
-appears here, not invented facts):
-{content_block}
-"""
-
-    style_reference_section = ""
-    if style_reference_html:
-        style_reference_section = f"""
-VISUAL STYLE TEMPLATE TO MATCH — this is the full HTML of another module already in this same
-course. Reuse its CSS/design system exactly: same colors, fonts, spacing, layout structure, and
-interactive components (accordions, quizzes, tabs, etc. — whatever pattern it uses). Do NOT reuse
-or reference its actual text/content, only its look, structure and conventions, so every module in
-the course feels like one consistent product:
-{style_reference_html}
-"""
 
     return f"""Write a new self-contained interactive HTML lecture page for the course module "{title}".
 
 LEARNING OBJECTIVES:
 {objectives_block}
 
-SOURCE MATERIAL THIS MODULE SHOULD DRAW ON (filename + excerpt):
-{files_block}
+SOURCE MATERIAL THIS MODULE SHOULD DRAW ON (filename + content):
+{_file_blocks(product_files)}
 
 METHODOLOGY AND STRUCTURAL RULES (follow these):
 {methodology_text or "(no methodology notes provided)"}
-{other_modules_section}{other_modules_content_section}{style_reference_section}
+{competitor_section}{visual_section}{other_modules_section}{other_modules_content_section}{style_reference_section}
 KNOWN PAST MISTAKES TO AVOID (from previous course reviews):
 {feedback_block}
 
@@ -186,49 +234,24 @@ Return the complete HTML document for this module's lecture page — nothing els
 """
 
 
-async def generate_module_output(
-    client: OwuiClient,
-    model: str,
-    title: str,
-    learning_objectives: list[str],
-    current_html: str | None,
-    instruction: str,
-    product_excerpts: list[dict],
-    methodology_text: str,
-    feedback_notes: list[str],
-    other_modules: list[dict] | None = None,
-    other_modules_content: list[dict] | None = None,
-    style_reference_html: str | None = None,
-) -> str:
-    prompt = build_generate_prompt(
-        title,
-        learning_objectives,
-        current_html,
-        instruction,
-        product_excerpts,
-        methodology_text,
-        feedback_notes,
-        other_modules=other_modules,
-        other_modules_content=other_modules_content,
-        style_reference_html=style_reference_html,
+async def _request_edits(client: OwuiClient, model: str, prompt: str) -> list[dict]:
+    raw = await client.chat_completion(
+        model=model,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT_REVISE},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.2,
+        response_format={"type": "json_object"},
     )
+    data = json.loads(raw)
+    edits = data.get("edits")
+    if not isinstance(edits, list) or not edits:
+        raise ValueError("Model response did not contain an 'edits' list")
+    return edits
 
-    if current_html:
-        raw = await client.chat_completion(
-            model=model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT_REVISE},
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.2,
-            response_format={"type": "json_object"},
-        )
-        data = json.loads(raw)
-        edits = data.get("edits")
-        if not isinstance(edits, list) or not edits:
-            raise ValueError("Model response did not contain an 'edits' list")
-        return apply_edits(current_html, edits)
 
+async def _request_full_document(client: OwuiClient, model: str, prompt: str) -> str:
     raw = await client.chat_completion(
         model=model,
         messages=[
@@ -246,3 +269,73 @@ async def generate_module_output(
             "long for this model's output limit; try a shorter module or a different model"
         )
     return html
+
+
+async def generate_module_output(
+    client: OwuiClient,
+    model: str,
+    title: str,
+    learning_objectives: list[str],
+    current_html: str | None,
+    instruction: str,
+    product_files: list[dict],
+    methodology_text: str,
+    feedback_notes: list[str],
+    competitor_files: list[dict] | None = None,
+    visual_guidance: str | None = None,
+    other_modules: list[dict] | None = None,
+    other_modules_content: list[dict] | None = None,
+    style_reference_html: str | None = None,
+) -> str:
+    prompt = build_generate_prompt(
+        title,
+        learning_objectives,
+        current_html,
+        instruction,
+        product_files,
+        methodology_text,
+        feedback_notes,
+        competitor_files=competitor_files,
+        visual_guidance=visual_guidance,
+        other_modules=other_modules,
+        other_modules_content=other_modules_content,
+        style_reference_html=style_reference_html,
+    )
+
+    if not current_html:
+        return await _request_full_document(client, model, prompt)
+
+    try:
+        return apply_edits(current_html, await _request_edits(client, model, prompt))
+    except ValueError as first_error:
+        # The model's find/replace edits didn't apply cleanly (a missing or
+        # ambiguous anchor) — give it one chance to see its own mistake and
+        # correct it before giving up on an in-place revise altogether.
+        retry_prompt = f"""{prompt}
+
+Your previous response's edits failed to apply: {first_error}
+Re-read the CURRENT VERSION above carefully and make sure each "find" string is copied verbatim
+(character-for-character) from it and appears in it exactly once. Return corrected JSON edits.
+"""
+        try:
+            return apply_edits(current_html, await _request_edits(client, model, retry_prompt))
+        except ValueError:
+            # Still couldn't produce edits that apply — fall back to a full
+            # rewrite rather than failing the whole call and losing the
+            # user's generation request outright; the current version stays
+            # in history either way (see courses.py's versioning).
+            fresh_prompt = build_generate_prompt(
+                title,
+                learning_objectives,
+                None,
+                instruction,
+                product_files,
+                methodology_text,
+                feedback_notes,
+                competitor_files=competitor_files,
+                visual_guidance=visual_guidance,
+                other_modules=other_modules,
+                other_modules_content=other_modules_content,
+                style_reference_html=style_reference_html,
+            )
+            return await _request_full_document(client, model, fresh_prompt)

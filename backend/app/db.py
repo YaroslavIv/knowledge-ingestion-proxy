@@ -25,6 +25,8 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _migrate_product_knowledge_ids(conn)
+        await _migrate_single_to_list_column(conn, "course_project", "competitors_knowledge_id", "competitors_knowledge_ids")
+        await _migrate_single_to_list_column(conn, "course_project", "instructions_knowledge_id", "instructions_knowledge_ids")
 
 
 async def _migrate_product_knowledge_ids(conn) -> None:
@@ -38,14 +40,23 @@ async def _migrate_product_knowledge_ids(conn) -> None:
     column never existed) and a no-op on subsequent runs (nothing left to
     backfill once migrated).
     """
-    columns = {row[1] for row in (await conn.exec_driver_sql("PRAGMA table_info(course_project)")).fetchall()}
-    if "product_knowledge_id" not in columns:
+    await _migrate_single_to_list_column(conn, "course_project", "product_knowledge_id", "product_knowledge_ids")
+
+
+async def _migrate_single_to_list_column(conn, table: str, old_column: str, new_column: str) -> None:
+    """Generic version of the product_knowledge_id(s) migration above —
+    competitors_knowledge_id and instructions_knowledge_id went through the
+    exact same single-collection -> JSON-list change later on. Same
+    no-op-on-fresh-DB / no-op-once-migrated guarantees.
+    """
+    columns = {row[1] for row in (await conn.exec_driver_sql(f"PRAGMA table_info({table})")).fetchall()}
+    if old_column not in columns:
         return
-    if "product_knowledge_ids" not in columns:
-        await conn.exec_driver_sql("ALTER TABLE course_project ADD COLUMN product_knowledge_ids TEXT")
+    if new_column not in columns:
+        await conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {new_column} TEXT")
     await conn.exec_driver_sql(
-        "UPDATE course_project SET product_knowledge_ids = json_array(product_knowledge_id) "
-        "WHERE product_knowledge_ids IS NULL AND product_knowledge_id IS NOT NULL"
+        f"UPDATE {table} SET {new_column} = json_array({old_column}) "
+        f"WHERE {new_column} IS NULL AND {old_column} IS NOT NULL"
     )
 
 

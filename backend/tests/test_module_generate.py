@@ -14,7 +14,7 @@ def test_build_generate_prompt_revise_shape_embeds_current_html_and_instruction(
         learning_objectives=["Handle price objections"],
         current_html="<html><body>old content</body></html>",
         instruction="Add two more practice exercises.",
-        product_excerpts=[],
+        product_files=[],
         methodology_text="",
         feedback_notes=[],
     )
@@ -30,7 +30,7 @@ def test_build_generate_prompt_from_scratch_shape_embeds_objectives_and_material
         learning_objectives=["Explain the new feature"],
         current_html=None,
         instruction="Focus on the roadmap angle.",
-        product_excerpts=[{"filename": "roadmap.txt", "excerpt": "Q3 roadmap details."}],
+        product_files=[{"filename": "roadmap.txt", "content": "Q3 roadmap details."}],
         methodology_text="Explain -> Engage -> Check -> Apply.",
         feedback_notes=["Don't re-explain product tiers from scratch."],
     )
@@ -52,12 +52,68 @@ def test_build_generate_prompt_revise_always_includes_current_materials():
         learning_objectives=[],
         current_html="<html>old</html>",
         instruction="Change the accent color to green.",
-        product_excerpts=[{"filename": "datasheet.txt", "excerpt": "Elite supports 1000 FPS."}],
+        product_files=[{"filename": "datasheet.txt", "content": "Elite supports 1000 FPS."}],
         methodology_text="Explain -> Engage.",
         feedback_notes=[],
     )
     assert "Elite supports 1000 FPS." in prompt
     assert "Explain -> Engage." in prompt
+
+
+def test_build_generate_prompt_includes_competitor_material_in_both_shapes():
+    competitor_files = [{"filename": "rival.txt", "content": "Rival Corp lacks night-vision support."}]
+
+    from_scratch_prompt = build_generate_prompt(
+        title="Module 05",
+        learning_objectives=[],
+        current_html=None,
+        instruction="",
+        product_files=[],
+        methodology_text="",
+        feedback_notes=[],
+        competitor_files=competitor_files,
+    )
+    assert "Rival Corp lacks night-vision support." in from_scratch_prompt
+
+    revise_prompt = build_generate_prompt(
+        title="Module 05",
+        learning_objectives=[],
+        current_html="<html>old</html>",
+        instruction="Sharpen the positioning section.",
+        product_files=[],
+        methodology_text="",
+        feedback_notes=[],
+        competitor_files=competitor_files,
+    )
+    assert "Rival Corp lacks night-vision support." in revise_prompt
+
+
+def test_build_generate_prompt_includes_visual_guidance_in_both_shapes():
+    visual_guidance = "Use a dark navy accent color and rounded card components."
+
+    from_scratch_prompt = build_generate_prompt(
+        title="Module 05",
+        learning_objectives=[],
+        current_html=None,
+        instruction="",
+        product_files=[],
+        methodology_text="",
+        feedback_notes=[],
+        visual_guidance=visual_guidance,
+    )
+    assert visual_guidance in from_scratch_prompt
+
+    revise_prompt = build_generate_prompt(
+        title="Module 05",
+        learning_objectives=[],
+        current_html="<html>old</html>",
+        instruction="Restyle the buttons.",
+        product_files=[],
+        methodology_text="",
+        feedback_notes=[],
+        visual_guidance=visual_guidance,
+    )
+    assert visual_guidance in revise_prompt
 
 
 def test_build_generate_prompt_from_scratch_includes_other_modules_and_their_content():
@@ -66,7 +122,7 @@ def test_build_generate_prompt_from_scratch_includes_other_modules_and_their_con
         learning_objectives=["Test what the learner retained"],
         current_html=None,
         instruction="Only quiz on what this course actually covered.",
-        product_excerpts=[],
+        product_files=[],
         methodology_text="",
         feedback_notes=[],
         other_modules=[{"title": "Module 01 — Intro", "learning_objectives": ["Explain the basics"]}],
@@ -75,6 +131,26 @@ def test_build_generate_prompt_from_scratch_includes_other_modules_and_their_con
     assert "Module 01 — Intro" in prompt
     assert "Explain the basics" in prompt
     assert "Elite supports 1000 FPS." in prompt
+
+
+def test_build_generate_prompt_revise_can_also_see_other_modules_and_their_content():
+    """Revising a module can now be scoped to see sibling context too — not
+    just a from-scratch generation — since content-visibility is the
+    caller's explicit choice (other_module_ids), not tied to which shape of
+    generation this is."""
+    prompt = build_generate_prompt(
+        title="Module 09 — Final Test",
+        learning_objectives=[],
+        current_html="<html>old quiz</html>",
+        instruction="Add a question about the new pricing tier.",
+        product_files=[],
+        methodology_text="",
+        feedback_notes=[],
+        other_modules=[{"title": "Module 03 — Pricing", "learning_objectives": ["Explain pricing tiers"]}],
+        other_modules_content=[{"title": "Module 03 — Pricing", "text": "The Pro tier costs $99/month."}],
+    )
+    assert "Module 03 — Pricing" in prompt
+    assert "The Pro tier costs $99/month." in prompt
 
 
 def test_build_generate_prompt_from_scratch_includes_style_reference_html():
@@ -88,7 +164,7 @@ def test_build_generate_prompt_from_scratch_includes_style_reference_html():
         learning_objectives=["Test what the learner retained"],
         current_html=None,
         instruction="",
-        product_excerpts=[],
+        product_files=[],
         methodology_text="",
         feedback_notes=[],
         style_reference_html="<html><head><style>body{color:blue}</style></head><body>Module 01</body></html>",
@@ -97,22 +173,23 @@ def test_build_generate_prompt_from_scratch_includes_style_reference_html():
     assert "body{color:blue}" in prompt
 
 
-def test_build_generate_prompt_revise_shape_ignores_style_reference_html():
-    """Revising an existing module already has its own current_html as the
-    style/structure source of truth — style_reference_html is a from-scratch-
-    only concept and must not leak into the revise prompt."""
+def test_build_generate_prompt_revise_can_also_receive_an_explicit_style_reference():
+    """Content-visibility and style-borrowing are independent choices — a
+    caller revising a module can still explicitly ask to see another
+    module's HTML as a visual comparison, even though the module being
+    revised already has its own current_html as a style baseline."""
     prompt = build_generate_prompt(
         title="Module 05",
         learning_objectives=[],
         current_html="<html>old</html>",
         instruction="Change the accent color to green.",
-        product_excerpts=[],
+        product_files=[],
         methodology_text="",
         feedback_notes=[],
         style_reference_html="<html><head><style>body{color:blue}</style></head><body>Other module</body></html>",
     )
-    assert "VISUAL STYLE TEMPLATE" not in prompt
-    assert "body{color:blue}" not in prompt
+    assert "VISUAL STYLE TEMPLATE" in prompt
+    assert "body{color:blue}" in prompt
 
 
 def test_apply_edits_inserts_before_a_unique_anchor():
@@ -157,7 +234,7 @@ async def test_generate_module_output_strips_markdown_fences_when_generating_fro
         learning_objectives=[],
         current_html=None,
         instruction="",
-        product_excerpts=[],
+        product_files=[],
         methodology_text="",
         feedback_notes=[],
     )
@@ -178,7 +255,7 @@ async def test_generate_module_output_rejects_non_html_response():
             learning_objectives=[],
             current_html=None,
             instruction="",
-            product_excerpts=[],
+            product_files=[],
             methodology_text="",
             feedback_notes=[],
         )
@@ -202,7 +279,7 @@ async def test_generate_module_output_rejects_a_truncated_from_scratch_response(
             learning_objectives=[],
             current_html=None,
             instruction="",
-            product_excerpts=[],
+            product_files=[],
             methodology_text="",
             feedback_notes=[],
         )
@@ -237,7 +314,7 @@ async def test_generate_module_output_revises_via_bounded_find_replace_edits():
         learning_objectives=[],
         current_html="<body><p>Original</p></body>",
         instruction="Add a practice exercise",
-        product_excerpts=[],
+        product_files=[],
         methodology_text="",
         feedback_notes=[],
     )
@@ -247,23 +324,63 @@ async def test_generate_module_output_revises_via_bounded_find_replace_edits():
 
 
 @respx.mock
-async def test_generate_module_output_revise_rejects_a_missing_anchor():
-    respx.post("http://fake-owui.test/api/v1/chat/completions").mock(
-        return_value=Response(
-            200,
-            json={"choices": [{"message": {"content": json.dumps({"edits": [{"find": "nope", "replace": "x"}]})}}]},
-        )
+async def test_generate_module_output_revise_retries_once_then_succeeds():
+    """A missing/ambiguous anchor gets the model one retry, fed its own
+    error, before anything falls back to a full rewrite."""
+    chat_route = respx.post("http://fake-owui.test/api/v1/chat/completions").mock(
+        side_effect=[
+            Response(200, json={"choices": [{"message": {"content": json.dumps({"edits": [{"find": "nope", "replace": "x"}]})}}]}),
+            Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": json.dumps({"edits": [{"find": "</body>", "replace": "<p>Fixed</p></body>"}]})}}
+                    ]
+                },
+            ),
+        ]
     )
     client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
-    with pytest.raises(ValueError, match="could not find"):
-        await generate_module_output(
-            client,
-            model="gpt-4o-mini",
-            title="Module 01",
-            learning_objectives=[],
-            current_html="<body><p>Original</p></body>",
-            instruction="Add a practice exercise",
-            product_excerpts=[],
-            methodology_text="",
-            feedback_notes=[],
-        )
+    html = await generate_module_output(
+        client,
+        model="gpt-4o-mini",
+        title="Module 01",
+        learning_objectives=[],
+        current_html="<body><p>Original</p></body>",
+        instruction="Add a practice exercise",
+        product_files=[],
+        methodology_text="",
+        feedback_notes=[],
+    )
+    assert html == "<body><p>Original</p><p>Fixed</p></body>"
+    assert chat_route.call_count == 2
+    retry_prompt = json.loads(chat_route.calls[1].request.content)["messages"][1]["content"]
+    assert "failed to apply" in retry_prompt
+
+
+@respx.mock
+async def test_generate_module_output_revise_falls_back_to_full_rewrite_after_two_failures():
+    """If the model can't produce edits that apply even after one retry,
+    the call still succeeds via a full from-scratch rewrite instead of
+    failing the whole generation outright."""
+    chat_route = respx.post("http://fake-owui.test/api/v1/chat/completions").mock(
+        side_effect=[
+            Response(200, json={"choices": [{"message": {"content": json.dumps({"edits": [{"find": "nope", "replace": "x"}]})}}]}),
+            Response(200, json={"choices": [{"message": {"content": json.dumps({"edits": [{"find": "still-nope", "replace": "x"}]})}}]}),
+            Response(200, json={"choices": [{"message": {"content": "<html><body><p>Original</p><p>Rewritten</p></body></html>"}}]}),
+        ]
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+    html = await generate_module_output(
+        client,
+        model="gpt-4o-mini",
+        title="Module 01",
+        learning_objectives=[],
+        current_html="<body><p>Original</p></body>",
+        instruction="Add a practice exercise",
+        product_files=[],
+        methodology_text="",
+        feedback_notes=[],
+    )
+    assert html == "<html><body><p>Original</p><p>Rewritten</p></body></html>"
+    assert chat_route.call_count == 3
