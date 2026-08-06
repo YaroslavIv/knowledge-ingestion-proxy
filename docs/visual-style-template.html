@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Module 00 — Visual Style Reference</title>
+<style>
+  /* ---- Design tokens: change these to match your brand, everything below
+     reads from them. This is the part the model should copy exactly into
+     every generated module. ---- */
+  :root {
+    --accent: #2b6cb0;
+    --accent-dark: #1a4971;
+    --accent-soft: #ebf4ff;
+    --ink: #1a202c;
+    --ink-soft: #4a5568;
+    --bg: #ffffff;
+    --bg-alt: #f7fafc;
+    --border: #e2e8f0;
+    --success: #2f855a;
+    --success-soft: #eafaf0;
+    --radius: 14px;
+    --font-body: "Segoe UI", system-ui, -apple-system, sans-serif;
+    --font-heading: "Segoe UI Semibold", "Segoe UI", system-ui, sans-serif;
+    --max-width: 860px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: var(--font-body);
+    color: var(--ink);
+    background: var(--bg-alt);
+    line-height: 1.6;
+  }
+
+  .page {
+    max-width: var(--max-width);
+    margin: 0 auto;
+    padding: 32px 24px 80px;
+  }
+
+  header.module-header {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
+    color: #fff;
+    border-radius: var(--radius);
+    padding: 32px 28px;
+    margin-bottom: 24px;
+  }
+  header.module-header .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.75rem;
+    opacity: 0.85;
+    margin: 0 0 6px;
+  }
+  header.module-header h1 {
+    font-family: var(--font-heading);
+    font-size: 1.75rem;
+    margin: 0;
+  }
+
+  .objectives {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    margin-bottom: 24px;
+  }
+  .objectives h2 {
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent-dark);
+    margin: 0 0 10px;
+  }
+  .objectives ul { margin: 0; padding-left: 20px; }
+  .objectives li { margin-bottom: 4px; }
+
+  section.content-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px 28px;
+    margin-bottom: 20px;
+  }
+  section.content-block h2 {
+    font-family: var(--font-heading);
+    font-size: 1.25rem;
+    color: var(--ink);
+    margin-top: 0;
+  }
+  section.content-block p { color: var(--ink-soft); }
+
+  /* ---- Accordion: reusable interactive component ---- */
+  .accordion { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .accordion-item + .accordion-item { border-top: 1px solid var(--border); }
+  .accordion-trigger {
+    width: 100%;
+    text-align: left;
+    background: var(--bg);
+    border: none;
+    padding: 16px 20px;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--ink);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .accordion-trigger:hover { background: var(--bg-alt); }
+  .accordion-trigger .chevron { transition: transform 0.2s ease; color: var(--accent); }
+  .accordion-item.open .chevron { transform: rotate(180deg); }
+  .accordion-panel {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.25s ease;
+    background: var(--bg-alt);
+  }
+  .accordion-item.open .accordion-panel { max-height: 400px; }
+  .accordion-panel-inner { padding: 4px 20px 18px; color: var(--ink-soft); }
+
+  /* ---- Knowledge Check: visually distinct from ordinary body content on
+     purpose (past reviewer feedback: it must never blend in with regular
+     text) ---- */
+  .knowledge-check {
+    background: var(--accent-soft);
+    border: 2px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 22px 26px;
+    margin: 28px 0;
+  }
+  .knowledge-check .label {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 3px 10px;
+    border-radius: 999px;
+    margin-bottom: 10px;
+  }
+  .knowledge-check .question { font-weight: 600; margin-bottom: 12px; }
+  .kc-option {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    font-size: 0.95rem;
+  }
+  .kc-option:hover { border-color: var(--accent); }
+  .kc-option.correct { background: var(--success-soft); border-color: var(--success); }
+  .kc-feedback { display: none; font-size: 0.9rem; margin-top: 8px; color: var(--success); font-weight: 600; }
+  .kc-feedback.visible { display: block; }
+
+  footer.module-footer {
+    text-align: center;
+    color: var(--ink-soft);
+    font-size: 0.8rem;
+    margin-top: 40px;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="module-header">
+    <p class="eyebrow">Module 00 · Example</p>
+    <h1>Visual Style Reference — replace this title with the real module title</h1>
+  </header>
+
+  <div class="objectives">
+    <h2>Learning objectives</h2>
+    <ul>
+      <li>Explain what this section is for (replace with real objectives)</li>
+      <li>Recognize the reusable visual patterns below</li>
+    </ul>
+  </div>
+
+  <section class="content-block">
+    <h2>Ordinary content section</h2>
+    <p>
+      Body copy goes here. Keep paragraphs short, use headings to break up long sections, and reuse this card
+      pattern (white background, subtle border, rounded corners) for every distinct topic within the module.
+    </p>
+  </section>
+
+  <section class="content-block">
+    <h2>Interactive pattern: accordion</h2>
+    <div class="accordion">
+      <div class="accordion-item">
+        <button class="accordion-trigger" onclick="this.parentElement.classList.toggle('open')">
+          Click to expand — first topic
+          <span class="chevron">▾</span>
+        </button>
+        <div class="accordion-panel">
+          <div class="accordion-panel-inner">Expanded detail for the first topic goes here.</div>
+        </div>
+      </div>
+      <div class="accordion-item">
+        <button class="accordion-trigger" onclick="this.parentElement.classList.toggle('open')">
+          Click to expand — second topic
+          <span class="chevron">▾</span>
+        </button>
+        <div class="accordion-panel">
+          <div class="accordion-panel-inner">Expanded detail for the second topic goes here.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="knowledge-check">
+    <span class="label">Knowledge Check</span>
+    <div class="question">Example question — always visually distinct from body text like this.</div>
+    <button class="kc-option" onclick="this.classList.add('correct'); this.nextElementSibling?.classList.add('visible')">Correct answer</button>
+    <button class="kc-option" onclick="this.classList.add('correct'); this.nextElementSibling?.classList.add('visible')">Distractor option</button>
+    <div class="kc-feedback">Correct! Short explanation of why goes here.</div>
+  </div>
+
+  <footer class="module-footer">
+    Replace this whole document's content — keep the CSS tokens, layout structure, and interactive component
+    patterns above exactly as they are, so every module in the course looks like one consistent product.
+  </footer>
+
+</div>
+</body>
+</html>

@@ -73,23 +73,23 @@ async def test_finalize_caches_the_true_pre_redaction_original(client):
     assert original_resp.headers["x-original-filename"] == "doc.txt"
 
 
-@respx.mock
-async def test_file_list_flags_which_files_have_a_cached_original(client):
-    """The file list must tell apart files this proxy actually ingested
-    (real original cached, e.g. a PDF) from ones that only ever had
-    extracted text pushed to Open WebUI — that's the whole point of the
-    has_original flag driving the list's "original available" indicator."""
-    respx.post("http://fake-owui.test/api/v1/knowledge/create").mock(
-        return_value=Response(200, json={"id": "kb-1", "name": "Docs", "description": ""})
-    )
-    respx.post("http://fake-owui.test/api/v1/knowledge/kb-1/file/add").mock(return_value=Response(200))
-    await client.post("/api/kb", json={"name": "Docs", "version_tag": "v1.0"})
+_MINIMAL_PDF = (
+    b"%PDF-1.1\n"
+    b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+    b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 3 3]>>endobj\n"
+    b"trailer<</Root 1 0 R>>\n"
+)
 
+
+async def _ingest_one(client, filename, content_type, data, target_file_id):
+    """Runs one file through the real upload -> patch -> finalize pipeline,
+    caching whatever original this call passes as file_id's OriginalFileBlob.
+    """
     respx.post("http://fake-owui.test/api/v1/files/").mock(
-        return_value=Response(200, json={"id": "file-with-original", "filename": "doc.md"})
+        return_value=Response(200, json={"id": target_file_id, "filename": "doc.md"})
     )
-    files = {"file": ("doc.txt", b"raw original text", "text/plain")}
-    upload_resp = await client.post("/api/documents", files=files)
+    upload_resp = await client.post("/api/documents", files={"file": (filename, data, content_type)})
     session_id = upload_resp.json()["session_id"]
     await client.patch(
         f"/api/documents/{session_id}",
@@ -97,12 +97,31 @@ async def test_file_list_flags_which_files_have_a_cached_original(client):
     )
     await client.post(f"/api/documents/{session_id}/finalize")
 
+
+@respx.mock
+async def test_file_list_flags_only_files_whose_cached_original_is_actually_a_pdf(client):
+    """The icon must match KnowledgeDetail.svelte's own "is this a PDF"
+    check (real Content-Type, not the filename) — a file with a cached
+    original that ISN'T a PDF (e.g. a .txt) must not be flagged, even
+    though *some* original is cached for it. Confirmed live: an earlier,
+    looser version of this check flagged any cached original at all,
+    showing the PDF icon on files that open to plain text instead."""
+    respx.post("http://fake-owui.test/api/v1/knowledge/create").mock(
+        return_value=Response(200, json={"id": "kb-1", "name": "Docs", "description": ""})
+    )
+    respx.post("http://fake-owui.test/api/v1/knowledge/kb-1/file/add").mock(return_value=Response(200))
+    await client.post("/api/kb", json={"name": "Docs", "version_tag": "v1.0"})
+
+    await _ingest_one(client, "doc.pdf", "application/pdf", _MINIMAL_PDF, "file-with-pdf-original")
+    await _ingest_one(client, "doc.txt", "text/plain", b"raw original text", "file-with-text-original")
+
     respx.get("http://fake-owui.test/api/v1/knowledge/kb-1/files").mock(
         return_value=Response(
             200,
             json={
                 "items": [
-                    {"id": "file-with-original", "filename": "doc.md", "meta": {}},
+                    {"id": "file-with-pdf-original", "filename": "doc.md", "meta": {}},
+                    {"id": "file-with-text-original", "filename": "doc2.md", "meta": {}},
                     {"id": "file-no-original", "filename": "other.md", "meta": {}},
                 ]
             },
@@ -111,8 +130,9 @@ async def test_file_list_flags_which_files_have_a_cached_original(client):
     files_resp = await client.get("/api/kb/kb-1/files")
     files_by_id = {f["id"]: f for f in files_resp.json()}
 
-    assert files_by_id["file-with-original"]["has_original"] is True
-    assert files_by_id["file-no-original"]["has_original"] is False
+    assert files_by_id["file-with-pdf-original"]["has_pdf_original"] is True
+    assert files_by_id["file-with-text-original"]["has_pdf_original"] is False
+    assert files_by_id["file-no-original"]["has_pdf_original"] is False
 
 
 @respx.mock

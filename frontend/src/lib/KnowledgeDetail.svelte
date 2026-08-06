@@ -897,10 +897,10 @@
               </div>
 
               <div class="flex flex-wrap items-center gap-1.5 px-2.5 pb-2">
-                {#if f.has_original}
+                {#if f.has_pdf_original}
                   <span
                     class="flex items-center justify-center size-4 rounded bg-red-500/15 text-red-600 dark:text-red-400 shrink-0"
-                    title="Original file (e.g. PDF) is cached — you can view/download the true source, not just the extracted text"
+                    title="The original PDF is cached — opening this file shows the real PDF, not just the extracted text"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-3">
                       <path
