@@ -132,6 +132,11 @@ class KnowledgeFileSummary(BaseModel):
     cloned_from_file_id: str | None = None
     changed: bool = False
     last_change_method: str | None = None
+    # Whether this proxy has the real original file (e.g. an actual PDF)
+    # cached for it — false for files that only ever had extracted text
+    # pushed to Open WebUI (nothing else to fall back to but that same
+    # text). See original_storage.has_original.
+    has_original: bool = False
 
 
 class UpdateFileTagsRequest(BaseModel):

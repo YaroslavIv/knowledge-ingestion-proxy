@@ -27,6 +27,8 @@ async def init_db() -> None:
         await _migrate_product_knowledge_ids(conn)
         await _migrate_single_to_list_column(conn, "course_project", "competitors_knowledge_id", "competitors_knowledge_ids")
         await _migrate_single_to_list_column(conn, "course_project", "instructions_knowledge_id", "instructions_knowledge_ids")
+        await _ensure_column(conn, "course_project", "visual_knowledge_id", "TEXT")
+        await _ensure_column(conn, "course_module_spec", "last_generation_settings", "TEXT")
 
 
 async def _migrate_product_knowledge_ids(conn) -> None:
@@ -58,6 +60,18 @@ async def _migrate_single_to_list_column(conn, table: str, old_column: str, new_
         f"UPDATE {table} SET {new_column} = json_array({old_column}) "
         f"WHERE {new_column} IS NULL AND {old_column} IS NOT NULL"
     )
+
+
+async def _ensure_column(conn, table: str, column: str, sql_type: str) -> None:
+    """Adds a brand-new column with no backfill needed — unlike
+    _migrate_single_to_list_column, there's no old column to carry values
+    forward from, just a column create_all never adds to an existing table
+    (it only creates missing tables, never alters one that already exists).
+    A no-op once the column is there.
+    """
+    columns = {row[1] for row in (await conn.exec_driver_sql(f"PRAGMA table_info({table})")).fetchall()}
+    if column not in columns:
+        await conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}")
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

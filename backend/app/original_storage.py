@@ -75,6 +75,20 @@ async def get_original(db: AsyncSession, file_id: str) -> tuple[bytes, str, str]
     return path.read_bytes(), blob.content_type, blob.filename
 
 
+async def has_original(db: AsyncSession, file_id: str) -> bool:
+    """Cheap existence check for the file list — whether a real original
+    (e.g. an actual PDF) is cached for this file_id, without reading its
+    bytes off disk the way get_original does. Drives the "has original"
+    indicator so it's obvious which files only ever had extracted text
+    pushed to Open WebUI (no real original captured) versus which ones
+    this proxy actually ingested and can show the true source document for.
+    """
+    stored_path = (
+        await db.execute(select(OriginalFileBlob.stored_path).where(OriginalFileBlob.file_id == file_id))
+    ).scalar_one_or_none()
+    return stored_path is not None and Path(stored_path).is_file()
+
+
 async def delete_original_by_file_id(db: AsyncSession, file_id: str) -> None:
     blob = (
         await db.execute(select(OriginalFileBlob).where(OriginalFileBlob.file_id == file_id))

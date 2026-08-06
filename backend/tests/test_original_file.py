@@ -74,6 +74,48 @@ async def test_finalize_caches_the_true_pre_redaction_original(client):
 
 
 @respx.mock
+async def test_file_list_flags_which_files_have_a_cached_original(client):
+    """The file list must tell apart files this proxy actually ingested
+    (real original cached, e.g. a PDF) from ones that only ever had
+    extracted text pushed to Open WebUI — that's the whole point of the
+    has_original flag driving the list's "original available" indicator."""
+    respx.post("http://fake-owui.test/api/v1/knowledge/create").mock(
+        return_value=Response(200, json={"id": "kb-1", "name": "Docs", "description": ""})
+    )
+    respx.post("http://fake-owui.test/api/v1/knowledge/kb-1/file/add").mock(return_value=Response(200))
+    await client.post("/api/kb", json={"name": "Docs", "version_tag": "v1.0"})
+
+    respx.post("http://fake-owui.test/api/v1/files/").mock(
+        return_value=Response(200, json={"id": "file-with-original", "filename": "doc.md"})
+    )
+    files = {"file": ("doc.txt", b"raw original text", "text/plain")}
+    upload_resp = await client.post("/api/documents", files=files)
+    session_id = upload_resp.json()["session_id"]
+    await client.patch(
+        f"/api/documents/{session_id}",
+        json={"text": "extracted text", "redactions": [], "target_knowledge_id": "kb-1"},
+    )
+    await client.post(f"/api/documents/{session_id}/finalize")
+
+    respx.get("http://fake-owui.test/api/v1/knowledge/kb-1/files").mock(
+        return_value=Response(
+            200,
+            json={
+                "items": [
+                    {"id": "file-with-original", "filename": "doc.md", "meta": {}},
+                    {"id": "file-no-original", "filename": "other.md", "meta": {}},
+                ]
+            },
+        )
+    )
+    files_resp = await client.get("/api/kb/kb-1/files")
+    files_by_id = {f["id"]: f for f in files_resp.json()}
+
+    assert files_by_id["file-with-original"]["has_original"] is True
+    assert files_by_id["file-no-original"]["has_original"] is False
+
+
+@respx.mock
 async def test_replace_file_recaches_new_original_and_drops_old_one(client):
     respx.post("http://fake-owui.test/api/v1/knowledge/create").mock(
         return_value=Response(200, json={"id": "kb-1", "name": "Docs", "description": ""})

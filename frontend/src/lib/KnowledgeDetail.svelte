@@ -897,6 +897,21 @@
               </div>
 
               <div class="flex flex-wrap items-center gap-1.5 px-2.5 pb-2">
+                {#if f.has_original}
+                  <span
+                    class="flex items-center justify-center size-4 rounded bg-red-500/15 text-red-600 dark:text-red-400 shrink-0"
+                    title="Original file (e.g. PDF) is cached — you can view/download the true source, not just the extracted text"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-3">
+                      <path
+                        d="M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6H6Z"
+                        opacity="0.35"
+                      />
+                      <path d="M14 2v5a1 1 0 0 0 1 1h5" opacity="0.55" />
+                      <text x="12" y="17.5" text-anchor="middle" font-size="7.5" font-weight="700" fill="white">PDF</text>
+                    </svg>
+                  </span>
+                {/if}
                 {#if f.version_tag}
                   {#if f.changed}
                     <span class="text-[0.65rem] font-medium leading-normal whitespace-nowrap px-1.5 py-0.5 rounded-full bg-black text-white dark:bg-white dark:text-black">

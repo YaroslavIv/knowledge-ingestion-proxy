@@ -11,7 +11,7 @@ from app.config_cache import get_chunking_config
 from app.db import get_db
 from app.deps import get_owui_client
 from app.models import CourseModuleOutputVersion, TagDictionary, TrackedCollection, TrackedFile
-from app.original_storage import delete_original_by_file_id, get_original
+from app.original_storage import delete_original_by_file_id, get_original, has_original
 from app.owui_client import OwuiClient, OwuiError
 from app.parsing.dispatch import parse_document
 from app.redaction import apply_redactions
@@ -375,6 +375,7 @@ async def list_knowledge_files(
                 cloned_from_file_id=tracked.cloned_from_file_id,
                 changed=tracked.version_tag == collection.version_tag,
                 last_change_method=tracked.last_change_method,
+                has_original=await has_original(db, item["id"]),
             )
         )
     await db.commit()
@@ -403,6 +404,7 @@ async def update_file_tags(
         cloned_from_file_id=tracked.cloned_from_file_id,
         changed=tracked.version_tag == collection.version_tag,
         last_change_method=tracked.last_change_method,
+        has_original=await has_original(db, file_id),
     )
 
 
