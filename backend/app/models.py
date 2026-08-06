@@ -165,20 +165,27 @@ class CourseProject(Base):
     """One lecture-generation project — a product, its source collections,
     and the pedagogy/language it should be taught in.
 
-    product_knowledge_id / competitors_knowledge_id / instructions_knowledge_id
+    product_knowledge_ids / competitors_knowledge_id / instructions_knowledge_id
     point at Open WebUI knowledge bases (competitors is optional — not every
     product has documented competitors). Kept separate on purpose: product
     material is reusable for other tasks (plain Q&A, support, etc.), while
     the instructions collection (methodology + accumulated feedback) is
     specific to "how do we build a lecture" and shouldn't pollute the
     product material with generation-only guidance.
+
+    product_knowledge_ids is a list (unlike the other, single-collection
+    roles here) — a product's material is often split across several
+    collections (e.g. datasheets in one, a separate one per sub-product),
+    and generation pulls files from all of them. See db.py's startup
+    migration for how this list is populated for projects created before it
+    became a list (back when this was a single product_knowledge_id).
     """
 
     __tablename__ = "course_project"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String)
-    product_knowledge_id: Mapped[str] = mapped_column(String)
+    product_knowledge_ids: Mapped[list] = mapped_column(JSON, default=list)
     competitors_knowledge_id: Mapped[str | None] = mapped_column(String, nullable=True)
     instructions_knowledge_id: Mapped[str] = mapped_column(String)
     pedagogy_version: Mapped[str] = mapped_column(String, default="v2")

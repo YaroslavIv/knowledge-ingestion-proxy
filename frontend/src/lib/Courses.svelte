@@ -10,11 +10,18 @@
 
   let creating = $state(false);
   let newName = $state("");
-  let newProductKb = $state("");
+  // Product material is often split across several collections — a
+  // checkbox list rather than a single <select>, unlike competitors/
+  // instructions which stay single-collection.
+  let newProductKbs = $state([]);
   let newCompetitorsKb = $state("");
   let newInstructionsKb = $state("");
   let newLanguage = $state("en");
   let newAudience = $state("sales");
+
+  function toggleNewProductKb(id) {
+    newProductKbs = newProductKbs.includes(id) ? newProductKbs.filter((i) => i !== id) : [...newProductKbs, id];
+  }
 
   async function load() {
     error = null;
@@ -32,12 +39,12 @@
   }
 
   async function confirmCreate() {
-    if (!newName.trim() || !newProductKb || !newInstructionsKb) return;
+    if (!newName.trim() || newProductKbs.length === 0 || !newInstructionsKb) return;
     error = null;
     try {
       const project = await createCourseProject({
         name: newName.trim(),
-        product_knowledge_id: newProductKb,
+        product_knowledge_ids: newProductKbs,
         competitors_knowledge_id: newCompetitorsKb || null,
         instructions_knowledge_id: newInstructionsKb,
         language: newLanguage,
@@ -46,7 +53,7 @@
       items = [project, ...(items ?? [])];
       creating = false;
       newName = "";
-      newProductKb = "";
+      newProductKbs = [];
       newCompetitorsKb = "";
       newInstructionsKb = "";
       onOpen(project);
@@ -97,11 +104,18 @@
     <input class="text-sm px-3 py-2 rounded-xl bg-gray-50 dark:bg-gray-850 outline-hidden" placeholder="Project name (e.g. UVSS Sales Onboarding)" bind:value={newName} />
     <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
       <div class="flex flex-col gap-0.5">
-        <label for="product-kb" class="text-xs text-gray-500">Product material (required)</label>
-        <select id="product-kb" class="text-sm px-2 py-2 rounded-xl bg-gray-50 dark:bg-gray-850 outline-hidden" bind:value={newProductKb}>
-          <option value="">Select a knowledge base…</option>
-          {#each knowledgeBases as kb}<option value={kb.id}>{kb.name}</option>{/each}
-        </select>
+        <span class="text-xs text-gray-500" id="product-kb-label">Product material (required, pick one or more)</span>
+        <div
+          aria-labelledby="product-kb-label"
+          class="flex flex-col gap-0.5 max-h-32 overflow-y-auto text-sm px-2 py-1.5 rounded-xl bg-gray-50 dark:bg-gray-850"
+        >
+          {#each knowledgeBases as kb}
+            <label class="flex items-center gap-1.5">
+              <input type="checkbox" checked={newProductKbs.includes(kb.id)} onchange={() => toggleNewProductKb(kb.id)} />
+              {kb.name}
+            </label>
+          {/each}
+        </div>
       </div>
       <div class="flex flex-col gap-0.5">
         <label for="competitors-kb" class="text-xs text-gray-500">Competitive intel (optional)</label>
@@ -131,7 +145,7 @@
     <button
       type="button"
       class="primary self-start px-4"
-      disabled={!newName.trim() || !newProductKb || !newInstructionsKb}
+      disabled={!newName.trim() || newProductKbs.length === 0 || !newInstructionsKb}
       onclick={confirmCreate}
     >
       Create
@@ -182,7 +196,9 @@
             </div>
             <div class="flex items-center gap-1 justify-between px-1.5">
               <div class="text-sm font-medium line-clamp-1">{item.name}</div>
-              <div class="text-xs text-gray-500 shrink-0">Product: {kbName(item.product_knowledge_id)}</div>
+              <div class="text-xs text-gray-500 shrink-0 truncate max-w-[16rem]">
+                Product: {item.product_knowledge_ids.map(kbName).join(", ")}
+              </div>
             </div>
           </div>
         </div>

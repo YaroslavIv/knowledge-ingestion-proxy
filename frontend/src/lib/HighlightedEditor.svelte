@@ -189,15 +189,33 @@
     border-radius: 0.25rem;
   }
 
+  /* text-decoration on purpose, not border-bottom: a real border adds to
+     the element's box height, which the invisible plain text in the
+     textarea underneath never has — enough flagged/repeated marks and the
+     backdrop's total rendered height quietly drifts taller than the
+     textarea's. Since scroll position is synced by raw pixel offset (see
+     handleScroll below), that height mismatch is exactly what makes a
+     selection start looking like it landed a line above or below where it
+     actually did, the more of the document you've scrolled past — worse in
+     a narrower pane (e.g. this editor next to an open PDF preview), where
+     wrapped lines are shorter and flagged/repeated spans are relatively
+     more frequent per visible line. text-decoration is painted without
+     affecting layout at all, so it can't cause this. */
   :global(.backdrop mark.flagged) {
     background: color-mix(in srgb, var(--owui-danger) 20%, transparent);
-    border-bottom: 2px solid var(--owui-danger);
+    text-decoration: underline;
+    text-decoration-color: var(--owui-danger);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 2px;
     border-radius: 0.15rem;
   }
 
   :global(.backdrop mark.repeated) {
     background: color-mix(in srgb, var(--owui-warning) 25%, transparent);
-    border-bottom: 2px solid var(--owui-warning);
+    text-decoration: underline;
+    text-decoration-color: var(--owui-warning);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 2px;
     border-radius: 0.15rem;
   }
 

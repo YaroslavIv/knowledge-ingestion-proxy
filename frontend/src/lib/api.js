@@ -255,6 +255,18 @@ export function deleteCourseProject(projectId) {
   return request(`/api/courses/${projectId}`, { method: "DELETE" });
 }
 
+export function addCourseMaterial(projectId, knowledgeId) {
+  return request(`/api/courses/${projectId}/materials`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ knowledge_id: knowledgeId }),
+  });
+}
+
+export function removeCourseMaterial(projectId, knowledgeId) {
+  return request(`/api/courses/${projectId}/materials/${knowledgeId}`, { method: "DELETE" });
+}
+
 export function seedCourseFeedback(projectId, text) {
   return request(`/api/courses/${projectId}/feedback/seed`, {
     method: "POST",
@@ -338,14 +350,13 @@ export function bumpOutputVersion(projectId, versionTag) {
 }
 
 export function generateModuleOutput(projectId, moduleId, model, instruction, options = {}) {
-  const { includeMaterials = false, includeOtherModules = false, regenerateFromScratch = false } = options;
+  const { includeOtherModules = false, regenerateFromScratch = false } = options;
   return request(`/api/courses/${projectId}/modules/${moduleId}/output/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
       instruction,
-      include_materials: includeMaterials,
       include_other_modules: includeOtherModules,
       regenerate_from_scratch: regenerateFromScratch,
     }),
@@ -354,4 +365,8 @@ export function generateModuleOutput(projectId, moduleId, model, instruction, op
 
 export function getModuleOutputContent(projectId, moduleId, versionId) {
   return request(`/api/courses/${projectId}/modules/${moduleId}/output/versions/${versionId}/content`);
+}
+
+export function getGenerationContext(projectId, moduleId) {
+  return request(`/api/courses/${projectId}/modules/${moduleId}/generation-context`);
 }

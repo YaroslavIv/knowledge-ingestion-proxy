@@ -26,7 +26,7 @@ async def _create_project_with_module(client, name="Output Test Project"):
             "/api/courses",
             json={
                 "name": name,
-                "product_knowledge_id": "kb-product",
+                "product_knowledge_ids": ["kb-product"],
                 "instructions_knowledge_id": "kb-instructions",
             },
         )
@@ -256,7 +256,7 @@ async def test_bump_output_version_requires_an_existing_output(client):
     project = (
         await client.post(
             "/api/courses",
-            json={"name": "No output yet", "product_knowledge_id": "kb-p", "instructions_knowledge_id": "kb-i"},
+            json={"name": "No output yet", "product_knowledge_ids": ["kb-p"], "instructions_knowledge_id": "kb-i"},
         )
     ).json()
     resp = await client.post(f"/api/courses/{project['id']}/bump-output-version", json={"version_tag": "v1.1"})

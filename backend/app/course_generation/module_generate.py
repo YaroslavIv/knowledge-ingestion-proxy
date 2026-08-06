@@ -78,7 +78,6 @@ def build_generate_prompt(
     product_excerpts: list[dict],
     methodology_text: str,
     feedback_notes: list[str],
-    include_materials: bool = False,
     other_modules: list[dict] | None = None,
     other_modules_content: list[dict] | None = None,
     style_reference_html: str | None = None,
@@ -86,14 +85,18 @@ def build_generate_prompt(
     feedback_block = "\n".join(f"- {n}" for n in feedback_notes) if feedback_notes else "(none yet)"
 
     if current_html:
-        materials_section = ""
-        if include_materials:
-            files_block = (
-                "\n\n".join(f"### {f['filename']}\n{f['excerpt']}" for f in product_excerpts) or "(no files)"
-            )
-            materials_section = f"""
-PRODUCT MATERIAL AVAILABLE (filename + excerpt) — consult this if the requested change needs real
-product facts, not just structure/style:
+        # Always included, for both a from-scratch write and a revise — a
+        # revise that only ever saw its own previous HTML (not the actual
+        # current collections) could keep citing facts the source material
+        # no longer has, with nothing to ever correct that.
+        files_block = (
+            "\n\n".join(f"### {f['filename']}\n{f['excerpt']}" for f in product_excerpts) or "(no files)"
+        )
+        materials_section = f"""
+CURRENT PRODUCT MATERIAL (filename + excerpt) — this is the collections' real content right now;
+if it conflicts with something already written in the page below (e.g. material was since removed
+or corrected), prefer this and update the page accordingly, even if the requested change doesn't
+explicitly mention it:
 {files_block}
 
 METHODOLOGY AND STRUCTURAL RULES:
@@ -193,7 +196,6 @@ async def generate_module_output(
     product_excerpts: list[dict],
     methodology_text: str,
     feedback_notes: list[str],
-    include_materials: bool = False,
     other_modules: list[dict] | None = None,
     other_modules_content: list[dict] | None = None,
     style_reference_html: str | None = None,
@@ -206,7 +208,6 @@ async def generate_module_output(
         product_excerpts,
         methodology_text,
         feedback_notes,
-        include_materials=include_materials,
         other_modules=other_modules,
         other_modules_content=other_modules_content,
         style_reference_html=style_reference_html,

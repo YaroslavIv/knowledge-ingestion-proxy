@@ -42,7 +42,11 @@ def test_build_generate_prompt_from_scratch_shape_embeds_objectives_and_material
     assert "Focus on the roadmap angle." in prompt
 
 
-def test_build_generate_prompt_revise_omits_materials_by_default():
+def test_build_generate_prompt_revise_always_includes_current_materials():
+    """A revise must always see the collections' current content, not just
+    the module's own previous HTML — otherwise it could keep citing facts
+    the source material no longer has (e.g. after a cleanup) with nothing
+    to ever correct that."""
     prompt = build_generate_prompt(
         title="Module 05",
         learning_objectives=[],
@@ -51,21 +55,6 @@ def test_build_generate_prompt_revise_omits_materials_by_default():
         product_excerpts=[{"filename": "datasheet.txt", "excerpt": "Elite supports 1000 FPS."}],
         methodology_text="Explain -> Engage.",
         feedback_notes=[],
-    )
-    assert "Elite supports 1000 FPS." not in prompt
-    assert "Explain -> Engage." not in prompt
-
-
-def test_build_generate_prompt_revise_includes_materials_when_requested():
-    prompt = build_generate_prompt(
-        title="Module 05",
-        learning_objectives=[],
-        current_html="<html>old</html>",
-        instruction="Add a practice exercise using a real product fact.",
-        product_excerpts=[{"filename": "datasheet.txt", "excerpt": "Elite supports 1000 FPS."}],
-        methodology_text="Explain -> Engage.",
-        feedback_notes=[],
-        include_materials=True,
     )
     assert "Elite supports 1000 FPS." in prompt
     assert "Explain -> Engage." in prompt

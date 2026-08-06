@@ -23,6 +23,7 @@ from app.models import (
 )
 from app.owui_client import OwuiClient, OwuiError
 from app.schemas import (
+    AddCourseMaterialRequest,
     BumpOutputVersionRequest,
     CourseFeedbackNoteSummary,
     CourseModuleOutputVersionSummary,
@@ -31,8 +32,10 @@ from app.schemas import (
     CreateCourseModuleSpecRequest,
     CreateCourseProjectRequest,
     GenerateModuleOutputRequest,
+    GenerationContextSummary,
     ModelSummary,
     ModuleOutputContentResponse,
+    ProductCollectionFiles,
     SeedFeedbackRequest,
     SplitModulesRequest,
     UpdateCourseModuleSpecRequest,
@@ -50,7 +53,7 @@ def _project_summary(row: CourseProject) -> CourseProjectSummary:
     return CourseProjectSummary(
         id=row.id,
         name=row.name,
-        product_knowledge_id=row.product_knowledge_id,
+        product_knowledge_ids=list(row.product_knowledge_ids or []),
         competitors_knowledge_id=row.competitors_knowledge_id,
         instructions_knowledge_id=row.instructions_knowledge_id,
         output_knowledge_id=row.output_knowledge_id,
@@ -145,6 +148,28 @@ async def _load_kb_files_with_content(client: OwuiClient, knowledge_id: str) -> 
     return files
 
 
+async def _load_product_files(client: OwuiClient, project: CourseProject) -> list[tuple[str, str]]:
+    """Product material can span several collections — flattens all of
+    them into one (filename, text) list, same shape a single collection's
+    _load_kb_files_with_content would have returned."""
+    files: list[tuple[str, str]] = []
+    for knowledge_id in project.product_knowledge_ids or []:
+        files.extend(await _load_kb_files_with_content(client, knowledge_id))
+    return files
+
+
+async def _list_kb_filenames(client: OwuiClient, knowledge_id: str) -> list[str]:
+    """Just the filenames, for a cheap pre-generation preview — unlike
+    _load_kb_files_with_content, doesn't fetch every file's full text.
+    """
+    try:
+        raw = await client.list_knowledge_files(knowledge_id, include_content=False)
+    except OwuiError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=e.detail) from e
+    items = raw.get("items", raw) if isinstance(raw, dict) else raw
+    return [item.get("filename") or item.get("meta", {}).get("name", "untitled") for item in items]
+
+
 async def _load_open_feedback_notes(db: AsyncSession, project_id: str) -> list[str]:
     rows = (
         await db.execute(
@@ -174,9 +199,11 @@ async def list_course_projects(db: AsyncSession = Depends(get_db)):
 
 @router.post("", response_model=CourseProjectSummary)
 async def create_course_project(body: CreateCourseProjectRequest, db: AsyncSession = Depends(get_db)):
+    if not body.product_knowledge_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one product knowledge base is required")
     row = CourseProject(
         name=body.name,
-        product_knowledge_id=body.product_knowledge_id,
+        product_knowledge_ids=body.product_knowledge_ids,
         competitors_knowledge_id=body.competitors_knowledge_id,
         instructions_knowledge_id=body.instructions_knowledge_id,
         pedagogy_version=body.pedagogy_version,
@@ -186,6 +213,34 @@ async def create_course_project(body: CreateCourseProjectRequest, db: AsyncSessi
     db.add(row)
     await db.commit()
     return _project_summary(row)
+
+
+@router.post("/{project_id}/materials", response_model=CourseProjectSummary)
+async def add_course_material(project_id: str, body: AddCourseMaterialRequest, db: AsyncSession = Depends(get_db)):
+    """Add another product-material collection to this project — product
+    material is often split across several collections (e.g. a datasheet
+    collection plus a separate one per sub-product), and generation pulls
+    files from all of them (see _load_kb_files_with_content usage below)."""
+    project = await _get_project_or_404(db, project_id)
+    ids = list(project.product_knowledge_ids or [])
+    if body.knowledge_id not in ids:
+        ids.append(body.knowledge_id)
+        project.product_knowledge_ids = ids
+        await db.commit()
+    return _project_summary(project)
+
+
+@router.delete("/{project_id}/materials/{knowledge_id}", response_model=CourseProjectSummary)
+async def remove_course_material(project_id: str, knowledge_id: str, db: AsyncSession = Depends(get_db)):
+    project = await _get_project_or_404(db, project_id)
+    ids = [i for i in (project.product_knowledge_ids or []) if i != knowledge_id]
+    if not ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="A course project needs at least one product material collection"
+        )
+    project.product_knowledge_ids = ids
+    await db.commit()
+    return _project_summary(project)
 
 
 @router.get("/{project_id}", response_model=CourseProjectSummary)
@@ -416,7 +471,7 @@ async def split_into_modules(
     """
     project = await _get_project_or_404(db, project_id)
 
-    product_files = await _load_kb_files_with_content(client, project.product_knowledge_id)
+    product_files = await _load_product_files(client, project)
     instructions_files = await _load_kb_files_with_content(client, project.instructions_knowledge_id)
     methodology_text = "\n\n---\n\n".join(content for _, content in instructions_files)
     feedback_notes = await _load_open_feedback_notes(db, project_id)
@@ -599,6 +654,49 @@ async def publish_module_output(
     return _output_version_summary(new_version)
 
 
+@router.get(
+    "/{project_id}/modules/{module_id}/generation-context",
+    response_model=GenerationContextSummary,
+)
+async def get_generation_context(
+    project_id: str,
+    module_id: str,
+    db: AsyncSession = Depends(get_db),
+    client: OwuiClient = Depends(get_owui_client),
+):
+    """What a Generate/Revise call for this module will actually pull in —
+    shown on the frontend before generating, so it's never a silent guess
+    (e.g. confirm here that a cleaned-up collection's file list is now
+    actually empty/updated before generating against it)."""
+    project = await _get_project_or_404(db, project_id)
+    await _get_module_or_404(db, project_id, module_id)
+
+    try:
+        kb_items = await client.list_knowledge_bases()
+    except OwuiError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=e.detail) from e
+    names_by_id = {item["id"]: item["name"] for item in kb_items}
+
+    product_files = [
+        ProductCollectionFiles(
+            knowledge_id=knowledge_id,
+            knowledge_name=names_by_id.get(knowledge_id, knowledge_id),
+            filenames=await _list_kb_filenames(client, knowledge_id),
+        )
+        for knowledge_id in project.product_knowledge_ids or []
+    ]
+    instructions_files = await _list_kb_filenames(client, project.instructions_knowledge_id)
+    feedback_notes = await _load_open_feedback_notes(db, project_id)
+    current = await _get_current_output(db, module_id)
+
+    return GenerationContextSummary(
+        product_files=product_files,
+        instructions_files=instructions_files,
+        feedback_notes_count=len(feedback_notes),
+        has_current_version=current is not None,
+    )
+
+
 @router.post(
     "/{project_id}/modules/{module_id}/output/generate",
     response_model=CourseModuleOutputVersionSummary,
@@ -625,16 +723,15 @@ async def generate_output(
     if not body.regenerate_from_scratch and current is not None and current.html_stored_path and Path(current.html_stored_path).is_file():
         current_html = load_stored_text(current.html_stored_path)
 
-    # Revising doesn't always need real product facts (a style/color change
-    # doesn't), so it's opt-in there — generating a brand-new module always
-    # consults materials, same as before.
-    product_excerpts: list[dict] = []
-    methodology_text = ""
-    if current_html is None or body.include_materials:
-        product_files = await _load_kb_files_with_content(client, project.product_knowledge_id)
-        product_excerpts = build_file_excerpts(product_files)
-        instructions_files = await _load_kb_files_with_content(client, project.instructions_knowledge_id)
-        methodology_text = "\n\n---\n\n".join(content for _, content in instructions_files)
+    # Always pulled fresh from the collections — for both a from-scratch
+    # write and a revise. A revise that skipped this would only ever see
+    # its own previous version's already-baked-in HTML, so it could keep
+    # citing facts the source material no longer has (e.g. after cleaning
+    # up the product collection) with nothing to ever correct that.
+    product_files = await _load_product_files(client, project)
+    product_excerpts = build_file_excerpts(product_files)
+    instructions_files = await _load_kb_files_with_content(client, project.instructions_knowledge_id)
+    methodology_text = "\n\n---\n\n".join(content for _, content in instructions_files)
 
     # A brand-new module (e.g. a final test) may need to know what the course
     # already covers — the other modules' specs always, their actual
@@ -690,7 +787,6 @@ async def generate_output(
             product_excerpts=product_excerpts,
             methodology_text=methodology_text,
             feedback_notes=feedback_notes,
-            include_materials=body.include_materials,
             other_modules=other_modules,
             other_modules_content=other_modules_content,
             style_reference_html=style_reference_html,

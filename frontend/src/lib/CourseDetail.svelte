@@ -1,5 +1,6 @@
 <script>
   import {
+    addCourseMaterial,
     approveCourseModule,
     authHeaders,
     bumpOutputVersion,
@@ -8,6 +9,7 @@
     deleteCourseProject,
     generateModuleOutput,
     getCourseProject,
+    getGenerationContext,
     getKnowledgeBaseDetail,
     getModuleOutputContent,
     getModuleOutputDownloadUrl,
@@ -15,9 +17,11 @@
     listAvailableModels,
     listCourseFeedback,
     listCourseModules,
+    listKnowledgeBases,
     listModuleOutputVersions,
     publishModuleOutput,
     rejectCourseModule,
+    removeCourseMaterial,
     seedCourseFeedback,
     splitCourseIntoModules,
     updateCourseModule,
@@ -79,13 +83,6 @@
     project
       ? [
           {
-            key: "product",
-            label: "Product Material",
-            description: "Raw product material — datasheets, specs, positioning. Reusable for other tasks; not course-specific.",
-            knowledgeId: project.product_knowledge_id,
-            emptyLabel: "Not set",
-          },
-          {
             key: "competitors",
             label: "Competitors",
             description: "Competitive intelligence — competitor brochures and positioning. Optional.",
@@ -113,7 +110,7 @@
   async function loadCollectionDetails() {
     if (!project) return;
     const ids = [
-      project.product_knowledge_id,
+      ...(project.product_knowledge_ids ?? []),
       project.competitors_knowledge_id,
       project.instructions_knowledge_id,
       project.output_knowledge_id,
@@ -122,6 +119,57 @@
       ids.map((id) => getKnowledgeBaseDetail(id).then((d) => [id, d]).catch((e) => [id, { error: e.message }])),
     );
     collectionDetails = Object.fromEntries(results);
+  }
+
+  // --- product material: possibly several collections, add/remove ---
+  let addingMaterial = $state(false);
+  let allKnowledgeBases = $state(null);
+  let materialQuery = $state("");
+  let materialBusy = $state(false);
+
+  async function openAddMaterial() {
+    addingMaterial = true;
+    materialQuery = "";
+    if (allKnowledgeBases === null) {
+      try {
+        allKnowledgeBases = await listKnowledgeBases();
+      } catch (e) {
+        error = e.message;
+      }
+    }
+  }
+
+  const materialCandidates = $derived(
+    (allKnowledgeBases ?? [])
+      .filter((kb) => !(project?.product_knowledge_ids ?? []).includes(kb.id))
+      .filter((kb) => !materialQuery || kb.name.toLowerCase().includes(materialQuery.toLowerCase())),
+  );
+
+  async function confirmAddMaterial(kb) {
+    materialBusy = true;
+    error = null;
+    try {
+      project = await addCourseMaterial(projectId, kb.id);
+      addingMaterial = false;
+      await loadCollectionDetails();
+    } catch (e) {
+      error = e.message;
+    } finally {
+      materialBusy = false;
+    }
+  }
+
+  async function confirmRemoveMaterial(knowledgeId) {
+    materialBusy = true;
+    error = null;
+    try {
+      project = await removeCourseMaterial(projectId, knowledgeId);
+      await loadCollectionDetails();
+    } catch (e) {
+      error = e.message;
+    } finally {
+      materialBusy = false;
+    }
   }
 
   async function handleDeleteProject() {
@@ -345,10 +393,6 @@
   let generateModel = $state("");
   let generateInstruction = $state("");
   let generateBusy = $state(false);
-  // Revising doesn't always need real product facts (a style/color change
-  // doesn't) — opt in when it does. Ignored when generating a brand-new
-  // module, which always consults materials.
-  let generateIncludeMaterials = $state(false);
   // A brand-new module (e.g. a final test) may need to know what the other
   // modules actually cover, not just raw product material — opt in to pull
   // their real generated content into the prompt. Ignored when revising.
@@ -362,15 +406,28 @@
   // banner up top — that one's easy to miss when the module you're
   // generating for is scrolled far down the list.
   let generateError = $state(null);
+  // What this exact call will pull in — always fetched fresh from the
+  // collections (see backend's generate_output), never toggled off, so this
+  // is a transparent preview, not a set of options that change what gets
+  // sent. null while loading, so the panel can show "checking…" instead of
+  // a misleading empty list.
+  let generationContext = $state(null);
+  let generationContextError = $state(null);
 
-  function startGenerate(m) {
+  async function startGenerate(m) {
     generatingModuleId = m.id;
     generateModel = generateModel || selectedModel || defaultModelId(models);
     generateInstruction = "";
-    generateIncludeMaterials = false;
     generateIncludeOtherModules = false;
     generateRegenerateFromScratch = false;
     generateError = null;
+    generationContext = null;
+    generationContextError = null;
+    try {
+      generationContext = await getGenerationContext(projectId, m.id);
+    } catch (e) {
+      generationContextError = e.message;
+    }
   }
 
   async function confirmGenerate(m) {
@@ -380,7 +437,6 @@
     error = null;
     try {
       await generateModuleOutput(projectId, m.id, generateModel, generateInstruction.trim(), {
-        includeMaterials: generateIncludeMaterials,
         includeOtherModules: generateIncludeOtherModules,
         regenerateFromScratch: generateRegenerateFromScratch,
       });
@@ -486,8 +542,78 @@
   <!-- Collections this course is built from -->
   <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100/30 dark:border-gray-850/30 p-3 flex flex-col gap-2">
     <div class="text-sm font-medium">Collections</div>
-    {#each collectionRoles as role, i (role.key)}
-      <div class="flex items-center gap-3 text-xs {i > 0 ? 'border-t border-gray-100 dark:border-gray-850 pt-2' : ''}">
+
+    <!-- Product Material — possibly several collections, unlike the single-collection roles below -->
+    <div class="flex flex-col gap-1.5 text-xs">
+      <div class="flex items-center justify-between flex-wrap gap-1">
+        <div class="flex flex-col gap-0.5">
+          <span class="text-sm font-medium">Product Material</span>
+          <span class="text-gray-500">Raw product material — datasheets, specs, positioning. Reusable for other tasks; not course-specific. Can span several collections.</span>
+        </div>
+        <button
+          type="button"
+          class="text-xs px-2.5 py-1 rounded-full border border-gray-200 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-850 transition shrink-0"
+          onclick={openAddMaterial}
+        >
+          + Add collection
+        </button>
+      </div>
+      {#each project?.product_knowledge_ids ?? [] as knowledgeId (knowledgeId)}
+        <div class="flex items-center gap-2 pl-2">
+          <span class="text-gray-500 truncate flex-1">{collectionDetails[knowledgeId]?.name ?? knowledgeId}</span>
+          {#if collectionDetails[knowledgeId]?.version_tag}
+            <span class="font-mono px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-850">{collectionDetails[knowledgeId].version_tag}</span>
+          {/if}
+          <button
+            type="button"
+            class="underline text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 shrink-0"
+            onclick={() => onOpenKnowledgeCollection(knowledgeId, collectionDetails[knowledgeId]?.name ?? knowledgeId)}
+          >
+            Open
+          </button>
+          <button
+            type="button"
+            class="underline text-gray-500 hover:text-red-600 dark:hover:text-red-400 shrink-0 disabled:opacity-40"
+            disabled={materialBusy}
+            onclick={() => confirmRemoveMaterial(knowledgeId)}
+          >
+            Remove
+          </button>
+        </div>
+      {/each}
+
+      {#if addingMaterial}
+        <div class="flex flex-col gap-2 bg-gray-50 dark:bg-gray-850 rounded-lg p-2">
+          <input
+            class="text-xs px-2 py-1.5 rounded-lg bg-white dark:bg-gray-900 outline-hidden"
+            placeholder="Search knowledge bases…"
+            bind:value={materialQuery}
+          />
+          {#if allKnowledgeBases === null}
+            <div class="text-gray-500 py-1">Loading…</div>
+          {:else if materialCandidates.length === 0}
+            <div class="text-gray-500 py-1">Nothing left to add.</div>
+          {:else}
+            <div class="flex flex-col max-h-48 overflow-y-auto">
+              {#each materialCandidates as kb (kb.id)}
+                <button
+                  type="button"
+                  class="text-left px-2 py-1 rounded-lg hover:bg-white dark:hover:bg-gray-900 disabled:opacity-40"
+                  disabled={materialBusy}
+                  onclick={() => confirmAddMaterial(kb)}
+                >
+                  {kb.name}
+                </button>
+              {/each}
+            </div>
+          {/if}
+          <button type="button" class="text-gray-500 self-start" onclick={() => (addingMaterial = false)}>Cancel</button>
+        </div>
+      {/if}
+    </div>
+
+    {#each collectionRoles as role (role.key)}
+      <div class="flex items-center gap-3 text-xs border-t border-gray-100 dark:border-gray-850 pt-2">
         <div class="flex flex-col gap-0.5 flex-1 min-w-0">
           <div class="flex items-center gap-2 flex-wrap">
             <span class="text-sm font-medium">{role.label}</span>
@@ -699,6 +825,48 @@
 
           {#if generatingModuleId === m.id}
             <div class="flex flex-col gap-1.5 bg-gray-50 dark:bg-gray-850 rounded-lg p-2">
+              <div class="text-xs px-2 py-1.5 rounded-lg bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
+                <div class="font-medium text-gray-500 mb-1">This will pull in:</div>
+                {#if generationContextError}
+                  <p class="text-red-500">{generationContextError}</p>
+                {:else if generationContext === null}
+                  <p class="text-gray-400 animate-pulse">Checking collections…</p>
+                {:else}
+                  <ul class="flex flex-col gap-0.5 text-gray-600 dark:text-gray-400">
+                    <li>
+                      Product material ({generationContext.product_files.length} collection{generationContext.product_files.length === 1 ? "" : "s"}):
+                      {#if generationContext.product_files.length === 0}
+                        none
+                      {:else}
+                        <ul class="pl-4 list-disc">
+                          {#each generationContext.product_files as group (group.knowledge_id)}
+                            <li>
+                              {group.knowledge_name} — {group.filenames.length} file{group.filenames.length === 1 ? "" : "s"}{group.filenames.length
+                                ? `: ${group.filenames.join(", ")}`
+                                : ""}
+                            </li>
+                          {/each}
+                        </ul>
+                      {/if}
+                    </li>
+                    <li>
+                      Instructions/methodology ({generationContext.instructions_files.length} file{generationContext.instructions_files.length === 1 ? "" : "s"}):
+                      {generationContext.instructions_files.join(", ") || "none"}
+                    </li>
+                    <li>
+                      {generationContext.feedback_notes_count} past-feedback note{generationContext.feedback_notes_count === 1 ? "" : "s"}
+                      <span class="text-gray-400">(stored in this proxy, not a knowledge-base collection)</span>
+                    </li>
+                    {#if generationContext.has_current_version}
+                      <li>
+                        The module's current page — {generateRegenerateFromScratch
+                          ? "will be discarded (regenerating from scratch)"
+                          : "will be revised in place via targeted edits"}
+                      </li>
+                    {/if}
+                  </ul>
+                {/if}
+              </div>
               <select class="text-xs px-2 py-1.5 rounded-lg bg-white dark:bg-gray-900 outline-hidden" bind:value={generateModel}>
                 {#each models as mo}<option value={mo.id}>{mo.name || mo.id}</option>{/each}
               </select>
@@ -711,10 +879,6 @@
                 bind:value={generateInstruction}
               ></textarea>
               {#if m.current_output_version}
-                <label class="flex items-center gap-1.5 text-xs text-gray-500">
-                  <input type="checkbox" bind:checked={generateIncludeMaterials} disabled={generateRegenerateFromScratch} />
-                  Consult product material for this change (only needed if it must reflect real product facts)
-                </label>
                 <label class="flex items-center gap-1.5 text-xs text-gray-500">
                   <input type="checkbox" bind:checked={generateRegenerateFromScratch} />
                   Regenerate from scratch instead of revising (use if this module came out broken/unstyled — discards

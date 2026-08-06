@@ -16,7 +16,7 @@ async def _create_project_with_module(client, name="Generate Test Project"):
             "/api/courses",
             json={
                 "name": name,
-                "product_knowledge_id": "kb-product",
+                "product_knowledge_ids": ["kb-product"],
                 "instructions_knowledge_id": "kb-instructions",
             },
         )
@@ -28,6 +28,90 @@ async def _create_project_with_module(client, name="Generate Test Project"):
         )
     ).json()
     return project, module
+
+
+@respx.mock
+async def test_generation_context_reports_files_and_current_version_state(client):
+    project, module = await _create_project_with_module(client)
+
+    respx.get("http://fake-owui.test/api/v1/knowledge/").mock(
+        return_value=Response(200, json=[{"id": "kb-product", "name": "Product Docs", "description": ""}])
+    )
+    respx.get("http://fake-owui.test/api/v1/knowledge/kb-product/files").mock(
+        return_value=Response(200, json={"items": [{"id": "file-a", "filename": "datasheet.txt", "meta": {}}]})
+    )
+    respx.get("http://fake-owui.test/api/v1/knowledge/kb-instructions/files").mock(
+        return_value=Response(200, json={"items": []})
+    )
+
+    resp = await client.get(f"/api/courses/{project['id']}/modules/{module['id']}/generation-context")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {
+        "product_files": [{"knowledge_id": "kb-product", "knowledge_name": "Product Docs", "filenames": ["datasheet.txt"]}],
+        "instructions_files": [],
+        "feedback_notes_count": 0,
+        "has_current_version": False,
+    }
+
+
+@respx.mock
+async def test_generate_from_scratch_pulls_files_from_all_product_collections(client):
+    """Product material can be split across several collections — a
+    generation call must merge files from every one of them, not just the
+    first."""
+    project = (
+        await client.post(
+            "/api/courses",
+            json={
+                "name": "Multi-collection project",
+                "product_knowledge_ids": ["kb-product-a", "kb-product-b"],
+                "instructions_knowledge_id": "kb-instructions",
+            },
+        )
+    ).json()
+    module = (
+        await client.post(
+            f"/api/courses/{project['id']}/modules",
+            json={"title": "Module 01", "learning_objectives": []},
+        )
+    ).json()
+
+    respx.get("http://fake-owui.test/api/v1/knowledge/kb-product-a/files").mock(
+        return_value=Response(200, json={"items": [{"id": "file-a", "filename": "datasheet-a.txt", "meta": {}}]})
+    )
+    respx.get("http://fake-owui.test/api/v1/files/file-a/data/content").mock(
+        return_value=Response(200, json={"content": "Product A supports 1000 FPS."})
+    )
+    respx.get("http://fake-owui.test/api/v1/knowledge/kb-product-b/files").mock(
+        return_value=Response(200, json={"items": [{"id": "file-b", "filename": "datasheet-b.txt", "meta": {}}]})
+    )
+    respx.get("http://fake-owui.test/api/v1/files/file-b/data/content").mock(
+        return_value=Response(200, json={"content": "Product B ships in Q3."})
+    )
+    respx.get("http://fake-owui.test/api/v1/knowledge/kb-instructions/files").mock(
+        return_value=Response(200, json={"items": []})
+    )
+    chat_route = respx.post("http://fake-owui.test/api/v1/chat/completions").mock(
+        return_value=Response(200, json={"choices": [{"message": {"content": GENERATED_HTML_V1}}]})
+    )
+    respx.post("http://fake-owui.test/api/v1/knowledge/create").mock(
+        return_value=Response(200, json={"id": "kb-output", "name": "x", "description": ""})
+    )
+    respx.post("http://fake-owui.test/api/v1/knowledge/kb-output/file/add").mock(return_value=Response(200))
+    respx.post("http://fake-owui.test/api/v1/files/").mock(
+        return_value=Response(200, json={"id": "file-out-1", "filename": "m.md"})
+    )
+
+    resp = await client.post(
+        f"/api/courses/{project['id']}/modules/{module['id']}/output/generate",
+        json={"model": "gpt-4o-mini", "instruction": "Write it."},
+    )
+    assert resp.status_code == 200
+
+    sent_prompt = json.loads(chat_route.calls[0].request.content)["messages"][1]["content"]
+    assert "Product A supports 1000 FPS." in sent_prompt
+    assert "Product B ships in Q3." in sent_prompt
 
 
 @respx.mock
@@ -86,6 +170,12 @@ async def test_revise_uses_current_html_as_context_and_creates_new_version(clien
         files={"file": ("module_01.html", GENERATED_HTML_V1.encode("utf-8"), "text/html")},
     )
 
+    respx.get("http://fake-owui.test/api/v1/knowledge/kb-product/files").mock(
+        return_value=Response(200, json={"items": []})
+    )
+    respx.get("http://fake-owui.test/api/v1/knowledge/kb-instructions/files").mock(
+        return_value=Response(200, json={"items": []})
+    )
     edit_payload = json.dumps(
         {
             "edits": [
@@ -130,7 +220,7 @@ async def test_revise_uses_current_html_as_context_and_creates_new_version(clien
 
 
 @respx.mock
-async def test_revise_with_include_materials_pulls_in_product_and_instructions(client):
+async def test_revise_always_pulls_in_current_product_and_instructions(client):
     project, module = await _create_project_with_module(client)
     respx.post("http://fake-owui.test/api/v1/knowledge/create").mock(
         return_value=Response(200, json={"id": "kb-output", "name": "x", "description": ""})
@@ -164,7 +254,6 @@ async def test_revise_with_include_materials_pulls_in_product_and_instructions(c
         json={
             "model": "gpt-4o-mini",
             "instruction": "Add a practice exercise using a real product fact.",
-            "include_materials": True,
         },
     )
     assert resp.status_code == 200

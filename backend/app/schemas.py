@@ -186,7 +186,7 @@ class ModelSummary(BaseModel):
 
 class CreateCourseProjectRequest(BaseModel):
     name: str
-    product_knowledge_id: str
+    product_knowledge_ids: list[str]
     competitors_knowledge_id: str | None = None
     instructions_knowledge_id: str
     pedagogy_version: str = "v2"
@@ -194,10 +194,14 @@ class CreateCourseProjectRequest(BaseModel):
     target_audience: str = "sales"
 
 
+class AddCourseMaterialRequest(BaseModel):
+    knowledge_id: str
+
+
 class CourseProjectSummary(BaseModel):
     id: str
     name: str
-    product_knowledge_id: str
+    product_knowledge_ids: list[str]
     competitors_knowledge_id: str | None = None
     instructions_knowledge_id: str
     output_knowledge_id: str | None = None
@@ -273,11 +277,6 @@ class BumpOutputVersionRequest(BaseModel):
 class GenerateModuleOutputRequest(BaseModel):
     model: str
     instruction: str
-    # Revising an existing module doesn't always need real product facts
-    # (e.g. a style/color change) — opt in when it does (e.g. "add more
-    # practice using real product details"). Ignored when generating a
-    # brand-new module from scratch, which always consults materials.
-    include_materials: bool = False
     # Generating a brand-new module (e.g. a final test) may need to know
     # what the OTHER modules actually cover, not just raw product material —
     # opt in to pull their extracted lecture text into the prompt. Ignored
@@ -290,6 +289,24 @@ class GenerateModuleOutputRequest(BaseModel):
     # reasonably fix it. The existing version is kept in history as usual;
     # this just supersedes it with a full rewrite.
     regenerate_from_scratch: bool = False
+
+
+class ProductCollectionFiles(BaseModel):
+    knowledge_id: str
+    knowledge_name: str
+    filenames: list[str]
+
+
+class GenerationContextSummary(BaseModel):
+    """What a Generate/Revise call for one module will actually pull in —
+    fetched fresh from the collections every time (see generate_output),
+    never cached — so this always reflects their current real content, not
+    whatever they held the last time this module was generated."""
+
+    product_files: list[ProductCollectionFiles]
+    instructions_files: list[str]
+    feedback_notes_count: int
+    has_current_version: bool
 
 
 class ModuleOutputContentResponse(BaseModel):

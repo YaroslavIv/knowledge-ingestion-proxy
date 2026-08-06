@@ -40,8 +40,14 @@ function escapeHtml(s) {
  * nesting two separate range-wrapping passes, which can't express "half in
  * chunk 2, half in chunk 3, all redacted" cleanly.
  *
- * A trailing newline is appended so the backdrop's height matches a
- * textarea's, which always renders at least one trailing line.
+ * A trailing newline is appended — but only when `text` doesn't already end
+ * with one — so the backdrop's line count matches a real <textarea>'s
+ * exactly: a <textarea> only renders that extra final blank line when its
+ * own value ends in "\n". Appending one unconditionally used to make the
+ * backdrop one line taller than the textarea whenever `text` already ended
+ * in "\n" — a real, if small, source of the two drifting out of vertical
+ * alignment (see HighlightedEditor.svelte's scroll-sync comment) on top of
+ * whatever a caller's redaction/chunk overlay classes contribute.
  */
 export function buildAnnotatedHtml(text, redactions, chunks = [], flagged = [], repeated = []) {
   const mergedRedactions = mergeRanges(redactions);
@@ -92,7 +98,7 @@ export function buildAnnotatedHtml(text, redactions, chunks = [], flagged = [], 
       html += `<${tag} class="${classes.join(" ")}">${segment}</${tag}>`;
     }
   }
-  return html + "\n";
+  return text.endsWith("\n") ? html : html + "\n";
 }
 
 // Figure/table/image captions left behind once a PDF's actual images are

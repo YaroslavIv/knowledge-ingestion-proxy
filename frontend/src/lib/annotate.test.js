@@ -17,6 +17,15 @@ describe("buildAnnotatedHtml", () => {
     expect(html).toBe("&lt;b&gt;&amp;&lt;/b&gt;\n");
   });
 
+  it("doesn't double up the trailing newline when text already ends with one", () => {
+    // A <textarea> only renders an extra blank final line when its own
+    // value ends in "\n" — appending a second one here would make the
+    // backdrop one line taller than the real textarea, drifting the two
+    // out of vertical alignment.
+    const html = buildAnnotatedHtml("keep this\n", []);
+    expect(html).toBe("keep this\n");
+  });
+
   it("merges overlapping redactions before rendering", () => {
     const html = buildAnnotatedHtml("abcdef", [
       { start: 1, end: 4 },

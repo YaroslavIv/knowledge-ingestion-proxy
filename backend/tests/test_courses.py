@@ -7,7 +7,7 @@ from httpx import Response
 async def _create_project(client, **overrides):
     body = {
         "name": "UVSS Onboarding",
-        "product_knowledge_id": "kb-product",
+        "product_knowledge_ids": ["kb-product"],
         "competitors_knowledge_id": "kb-competitors",
         "instructions_knowledge_id": "kb-instructions",
         "pedagogy_version": "v2",
@@ -24,6 +24,7 @@ async def test_create_and_get_course_project(client):
     project = await _create_project(client)
     assert project["name"] == "UVSS Onboarding"
     assert project["competitors_knowledge_id"] == "kb-competitors"
+    assert project["product_knowledge_ids"] == ["kb-product"]
 
     get_resp = await client.get(f"/api/courses/{project['id']}")
     assert get_resp.status_code == 200
@@ -33,6 +34,36 @@ async def test_create_and_get_course_project(client):
 async def test_get_missing_project_404s(client):
     resp = await client.get("/api/courses/does-not-exist")
     assert resp.status_code == 404
+
+
+async def test_create_project_requires_at_least_one_product_collection(client):
+    resp = await client.post(
+        "/api/courses",
+        json={"name": "No product material", "product_knowledge_ids": [], "instructions_knowledge_id": "kb-i"},
+    )
+    assert resp.status_code == 400
+
+
+async def test_add_and_remove_course_material(client):
+    project = await _create_project(client)
+
+    add_resp = await client.post(f"/api/courses/{project['id']}/materials", json={"knowledge_id": "kb-second"})
+    assert add_resp.status_code == 200
+    assert add_resp.json()["product_knowledge_ids"] == ["kb-product", "kb-second"]
+
+    # adding the same one again is a no-op, not a duplicate
+    again_resp = await client.post(f"/api/courses/{project['id']}/materials", json={"knowledge_id": "kb-second"})
+    assert again_resp.json()["product_knowledge_ids"] == ["kb-product", "kb-second"]
+
+    remove_resp = await client.delete(f"/api/courses/{project['id']}/materials/kb-product")
+    assert remove_resp.status_code == 200
+    assert remove_resp.json()["product_knowledge_ids"] == ["kb-second"]
+
+
+async def test_cannot_remove_the_last_product_material(client):
+    project = await _create_project(client)
+    resp = await client.delete(f"/api/courses/{project['id']}/materials/kb-product")
+    assert resp.status_code == 400
 
 
 async def test_list_course_projects(client):
