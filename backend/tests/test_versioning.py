@@ -496,6 +496,42 @@ async def test_update_collection_tags_works_for_a_collection_with_no_prior_track
     assert resp.json()["version_tag"] == "v1.0"  # default, synthesized on first touch
 
 
+@respx.mock
+async def test_reembed_file_pushes_its_current_content_unchanged(client):
+    """Changing the embedding model or chunk size in Open WebUI's own
+    settings never retroactively re-embeds already-processed files — this
+    endpoint forces that for one file by re-pushing its own
+    already-extracted text unchanged, which Open WebUI treats as a real
+    content update and re-embeds under whatever it currently has
+    configured. One file per call (not a whole-collection loop) so the
+    frontend can drive its own per-file progress bar."""
+    respx.get("http://fake-owui.test/api/v1/files/file-a/data/content").mock(
+        return_value=Response(200, json={"content": "content A"})
+    )
+    update_a = respx.post("http://fake-owui.test/api/v1/files/file-a/data/content/update").mock(
+        return_value=Response(200)
+    )
+
+    resp = await client.post("/api/kb/kb-1/files/file-a/reembed")
+    assert resp.status_code == 200
+    assert resp.json() is True
+    assert json.loads(update_a.calls[0].request.content) == {"content": "content A"}
+
+
+@respx.mock
+async def test_reembed_file_surfaces_owui_errors(client):
+    respx.get("http://fake-owui.test/api/v1/files/file-bad/data/content").mock(
+        return_value=Response(200, json={"content": "broken content"})
+    )
+    respx.post("http://fake-owui.test/api/v1/files/file-bad/data/content/update").mock(
+        return_value=Response(400, json={"detail": "Embedding failed"})
+    )
+
+    resp = await client.post("/api/kb/kb-1/files/file-bad/reembed")
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "Embedding failed"
+
+
 def _form_field(request, field_name: str) -> str:
     import email
 

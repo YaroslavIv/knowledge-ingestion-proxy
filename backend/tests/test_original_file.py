@@ -123,6 +123,10 @@ async def test_file_list_flags_only_files_whose_cached_original_is_actually_a_pd
                     {"id": "file-with-pdf-original", "filename": "doc.md", "meta": {}},
                     {"id": "file-with-text-original", "filename": "doc2.md", "meta": {}},
                     {"id": "file-no-original", "filename": "other.md", "meta": {}},
+                    # never went through this proxy at all (no OriginalFileBlob
+                    # row) — uploaded straight into Open WebUI, which genuinely
+                    # kept the real PDF and reports its real filename/extension.
+                    {"id": "file-uploaded-directly-to-owui", "filename": "securos-auto-datasheet-usa.pdf", "meta": {}},
                 ]
             },
         )
@@ -133,6 +137,7 @@ async def test_file_list_flags_only_files_whose_cached_original_is_actually_a_pd
     assert files_by_id["file-with-pdf-original"]["has_pdf_original"] is True
     assert files_by_id["file-with-text-original"]["has_pdf_original"] is False
     assert files_by_id["file-no-original"]["has_pdf_original"] is False
+    assert files_by_id["file-uploaded-directly-to-owui"]["has_pdf_original"] is True
 
 
 @respx.mock

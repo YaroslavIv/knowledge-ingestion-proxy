@@ -117,6 +117,8 @@ class CloneKnowledgeBaseResponse(BaseModel):
     skipped: list[dict] = []
 
 
+
+
 class FinalizeResponse(BaseModel):
     owui_file_id: str
     knowledge_id: str

@@ -315,6 +315,28 @@ async def clone_knowledge_base(
     )
 
 
+@router.post("/{knowledge_id}/files/{file_id}/reembed", response_model=bool)
+async def reembed_file(knowledge_id: str, file_id: str, client: OwuiClient = Depends(get_owui_client)):
+    """Re-push this one file's already-extracted text unchanged, forcing
+    Open WebUI to recompute its embedding under whatever embedding model /
+    chunk size+overlap it currently has configured in its own Admin
+    Settings — changing those settings there never retroactively re-embeds
+    already-processed files on its own; only a real content push does (see
+    update_file_content's own docstring).
+
+    Deliberately one file per call rather than one endpoint looping over
+    the whole collection: the frontend calls this once per file, in its own
+    loop, so it can show live per-file progress (a real progress bar, not
+    one opaque all-or-nothing wait) while re-embedding a large collection.
+    """
+    try:
+        content = await client.get_file_content(file_id)
+        await client.update_file_content(file_id, content)
+    except OwuiError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=e.detail) from e
+    return True
+
+
 @router.delete("/{knowledge_id}", response_model=bool)
 async def delete_knowledge_base(
     knowledge_id: str, db: AsyncSession = Depends(get_db), client: OwuiClient = Depends(get_owui_client)
@@ -364,10 +386,11 @@ async def list_knowledge_files(
     summaries = []
     for item in items:
         tracked = await get_or_synthesize_tracked_file(db, item["id"], knowledge_id)
+        filename = item.get("filename") or item.get("meta", {}).get("name", "untitled")
         summaries.append(
             KnowledgeFileSummary(
                 id=item["id"],
-                filename=item.get("filename") or item.get("meta", {}).get("name", "untitled"),
+                filename=filename,
                 created_at=item.get("created_at"),
                 size=item.get("meta", {}).get("size"),
                 version_tag=tracked.version_tag,
@@ -375,7 +398,18 @@ async def list_knowledge_files(
                 cloned_from_file_id=tracked.cloned_from_file_id,
                 changed=tracked.version_tag == collection.version_tag,
                 last_change_method=tracked.last_change_method,
-                has_pdf_original=await has_pdf_original(db, item["id"]),
+                # Two independent ways a file's original can genuinely be a
+                # PDF: (a) this proxy ingested it itself and cached the real
+                # bytes (see original_storage.has_pdf_original) — Open WebUI
+                # then only ever sees the cleaned text, renamed to .md, so
+                # the filename itself tells us nothing for these; or (b) it
+                # entered the collection some other way (uploaded straight
+                # into Open WebUI), in which case Open WebUI's own /original
+                # fallback serves ITS real stored bytes — for those, the
+                # filename Open WebUI reports is the genuine original one,
+                # so a plain ".pdf" extension is already a reliable signal
+                # with no extra network round-trip needed.
+                has_pdf_original=filename.lower().endswith(".pdf") or await has_pdf_original(db, item["id"]),
             )
         )
     await db.commit()

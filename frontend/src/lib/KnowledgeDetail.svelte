@@ -14,6 +14,7 @@
     listKnowledgeBaseFiles,
     patchDocument,
     previewChunks,
+    reembedFile,
     reparseKnowledgeFile,
     updateFileTags,
     updateKnowledgeFile,
@@ -45,6 +46,40 @@
   let sidebarCollapsed = $state(false);
   let idCopied = $state(false);
   let idCopyTimer = null;
+
+  // --- re-embed all files (e.g. after changing embedding model/chunk
+  // size in Open WebUI's own settings — never happens retroactively there).
+  // Driven from here rather than one backend call that loops internally,
+  // specifically so this loop's own progress is visible — a single opaque
+  // "please wait" for a 45-file collection looks indistinguishable from a
+  // hung page; updating reembedProgress after every file gives a real,
+  // live progress bar instead. ---
+  let reembedBusy = $state(false);
+  let reembedProgress = $state(null); // {done, total, filename} | null
+  let reembedFailed = $state([]); // [{filename, reason}]
+
+  async function handleReembedAll() {
+    if (
+      !confirm(
+        `Re-embed all ${files.length} file(s) in this collection using Open WebUI's current embedding model and chunk settings?\n\n` +
+          "This re-pushes each file's existing text unchanged, one file at a time, and can take a while for a large collection — don't close this tab while it runs.",
+      )
+    )
+      return;
+    reembedBusy = true;
+    reembedFailed = [];
+    reembedProgress = { done: 0, total: files.length, filename: "" };
+    for (const f of files) {
+      reembedProgress = { ...reembedProgress, filename: f.filename };
+      try {
+        await reembedFile(knowledgeId, f.id);
+      } catch (e) {
+        reembedFailed = [...reembedFailed, { filename: f.filename, reason: e.message }];
+      }
+      reembedProgress = { ...reembedProgress, done: reembedProgress.done + 1 };
+    }
+    reembedBusy = false;
+  }
 
   async function copyKnowledgeId() {
     try {
@@ -590,6 +625,13 @@
   }
 </script>
 
+{#snippet spinner()}
+  <svg class="animate-spin size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V4a8 8 0 00-8 8h0z"></path>
+  </svg>
+{/snippet}
+
 <div class="flex flex-col gap-3">
   <div class="flex items-center gap-2 px-1">
     <button type="button" aria-label="Back to Knowledge list" class="p-1 rounded-full hover:bg-gray-100 dark:hover:bg-gray-850 transition" onclick={onBack}>
@@ -655,7 +697,17 @@
     </button>
     <button
       type="button"
-      class="ml-auto text-xs px-2.5 py-1 rounded-full border border-gray-200 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-850 transition"
+      class="ml-auto flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border border-gray-200 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-850 transition disabled:opacity-50"
+      title="Re-push every file's current text so Open WebUI re-embeds it with whatever embedding model/chunk settings it currently has — necessary because changing those settings there never retroactively re-embeds existing files"
+      disabled={reembedBusy || files.length === 0}
+      onclick={handleReembedAll}
+    >
+      {#if reembedBusy}{@render spinner()}{/if}
+      {reembedBusy ? "Re-embedding…" : "Re-embed all"}
+    </button>
+    <button
+      type="button"
+      class="text-xs px-2.5 py-1 rounded-full border border-gray-200 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-850 transition"
       onclick={() => (cloning = !cloning)}
     >
       Clone
@@ -676,6 +728,41 @@
       </svg>
     </button>
   </div>
+
+  {#if reembedProgress}
+    <div class="text-xs px-2.5 py-2 rounded-xl bg-gray-50 dark:bg-gray-850 flex flex-col gap-1.5">
+      <div class="flex items-center gap-1.5 text-gray-600 dark:text-gray-400">
+        {#if reembedBusy}{@render spinner()}{/if}
+        <span class="font-medium">
+          {reembedBusy ? "Re-embedding" : "Re-embedded"}
+          {reembedProgress.done}/{reembedProgress.total} file(s)
+        </span>
+        {#if reembedBusy}
+          <span class="truncate opacity-70">— {reembedProgress.filename}</span>
+        {/if}
+        {#if !reembedBusy}
+          <button
+            type="button"
+            class="ml-auto text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 underline shrink-0"
+            onclick={() => (reembedProgress = null)}
+          >
+            Dismiss
+          </button>
+        {/if}
+      </div>
+      <div class="w-full h-1.5 rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+        <div
+          class="h-full bg-black dark:bg-white transition-[width] duration-150"
+          style="width: {reembedProgress.total ? Math.round((reembedProgress.done / reembedProgress.total) * 100) : 0}%"
+        ></div>
+      </div>
+      {#if reembedFailed.length > 0}
+        <div class="text-red-500">
+          {reembedFailed.length} failed: {reembedFailed.map((f) => `${f.filename} (${f.reason})`).join("; ")}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   {#if showLineage}
     <div class="lineage-panel flex flex-col gap-0.5 bg-white dark:bg-gray-900 rounded-2xl border border-gray-100/30 dark:border-gray-850/30 px-3 py-2.5">

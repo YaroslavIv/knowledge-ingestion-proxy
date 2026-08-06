@@ -172,6 +172,10 @@ export function deleteKnowledgeBase(knowledgeId) {
   return request(`/api/kb/${knowledgeId}`, { method: "DELETE" });
 }
 
+export function reembedFile(knowledgeId, fileId) {
+  return request(`/api/kb/${knowledgeId}/files/${fileId}/reembed`, { method: "POST" });
+}
+
 export function listKnowledgeBaseFiles(knowledgeId) {
   return request(`/api/kb/${knowledgeId}/files`);
 }
