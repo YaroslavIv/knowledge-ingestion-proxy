@@ -5,7 +5,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.chunking import preview_with_redactions, with_token_overrides
-from app.config import settings
 from app.config_cache import get_chunking_config
 from app.db import get_db
 from app.deps import get_owui_client
@@ -51,12 +50,6 @@ def _to_state_response(session: IngestionSession) -> DocumentStateResponse:
 @router.post("", response_model=DocumentCreatedResponse)
 async def upload_document(file: UploadFile, db: AsyncSession = Depends(get_db)):
     data = await file.read()
-    max_bytes = settings.max_upload_size_mb * 1024 * 1024
-    if len(data) > max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds {settings.max_upload_size_mb} MB limit",
-        )
 
     # Parsing happens synchronously, in-memory, within this single request.
     # The redacted/cleaned text is what ever reaches Open WebUI — `data` (the

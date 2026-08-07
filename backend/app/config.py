@@ -54,7 +54,6 @@ class Settings(BaseSettings):
     backup_retention_days: int = 30
 
     session_ttl_hours: int = 24
-    max_upload_size_mb: int = 50
 
     cors_allow_origins: list[str] = ["http://localhost:5173"]
 
