@@ -131,7 +131,7 @@ async def test_chat_completion_retries_without_temperature_when_the_model_reject
 @respx.mock
 async def test_chat_completion_does_not_retry_on_an_unrelated_400():
     respx.post("http://fake-owui.test/api/v1/chat/completions").mock(
-        return_value=Response(400, json={"detail": "Model not found"})
+        return_value=Response(400, json={"detail": "Invalid request payload"})
     )
     client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
     with pytest.raises(OwuiError):

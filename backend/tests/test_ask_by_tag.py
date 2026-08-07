@@ -96,6 +96,22 @@ async def test_ask_by_unknown_tag_400s(client):
     assert "nope" in resp.json()["detail"]
 
 
+@respx.mock
+async def test_ask_surfaces_a_502_not_a_raw_500_when_owui_rejects_tag_resolution(client):
+    """Resolving a tag has to list Open WebUI's own knowledge bases first —
+    if that call itself fails (e.g. the proxy's saved connection token got
+    invalidated by an Open WebUI upgrade), it must come back as a clean 502
+    with the real detail, not an unhandled exception bubbling up as a bare
+    500 with no useful information."""
+    respx.get("http://fake-owui.test/api/v1/knowledge/").mock(
+        return_value=Response(401, json={"detail": "401 Unauthorized"})
+    )
+    for path in ("/api/ask/route", "/api/ask/joint"):
+        resp = await client.post(path, json={"tag": "coe", "query": "q", "model": "gpt-5.4"})
+        assert resp.status_code == 502
+        assert "401" in resp.json()["detail"]
+
+
 async def test_ask_rejects_neither_collection_ids_nor_tag(client):
     resp = await client.post("/api/ask/route", json={"query": "q", "model": "gpt-5.4"})
     assert resp.status_code == 400

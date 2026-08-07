@@ -36,9 +36,9 @@ async def ask_routed(body: AskRoutedRequest, db: AsyncSession = Depends(get_db),
     Candidates come either from `collection_ids` directly, or from `tag` —
     every collection tagged with it, collapsed to just the newest version
     per clone lineage (see resolve_collection_ids_by_tag)."""
-    collection_ids = await _resolve_collection_ids(body, db, client)
-    history = [m.model_dump() for m in body.history]
     try:
+        collection_ids = await _resolve_collection_ids(body, db, client)
+        history = [m.model_dump() for m in body.history]
         return await ask_with_routing(client, body.model, collection_ids, body.query, k=body.k, history=history)
     except OwuiError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=e.detail) from e
@@ -54,9 +54,9 @@ async def ask_joint_endpoint(body: AskJointRequest, db: AsyncSession = Depends(g
 
     Candidates come either from `collection_ids` directly, or from `tag`,
     same resolution as ask_routed above."""
-    collection_ids = await _resolve_collection_ids(body, db, client)
-    history = [m.model_dump() for m in body.history]
     try:
+        collection_ids = await _resolve_collection_ids(body, db, client)
+        history = [m.model_dump() for m in body.history]
         return await ask_joint(client, body.model, collection_ids, body.query, history=history)
     except OwuiError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=e.detail) from e

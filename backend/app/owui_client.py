@@ -210,12 +210,16 @@ class OwuiClient:
         return resp
 
     @staticmethod
-    def _mentions_temperature(resp: httpx.Response) -> bool:
+    def _error_detail_text(resp: httpx.Response) -> str:
         try:
             detail = resp.json().get("detail", resp.text)
         except Exception:  # noqa: BLE001
             detail = resp.text
-        return "temperature" in str(detail).lower()
+        return str(detail).lower()
+
+    @classmethod
+    def _mentions_temperature(cls, resp: httpx.Response) -> bool:
+        return "temperature" in cls._error_detail_text(resp)
 
     async def upload_file_to_knowledge(
         self, filename: str, content: str, knowledge_id: str
