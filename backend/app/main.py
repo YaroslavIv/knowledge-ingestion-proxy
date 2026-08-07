@@ -12,7 +12,7 @@ from app.config import settings
 from app.db import AsyncSessionLocal, init_db
 from app.models import IngestionSession, OwuiConnection
 from app.original_storage import purge_orphaned
-from app.routers import ask, auth, backups, connections, courses, documents, kb, preview, tags
+from app.routers import ask, auth, backups, connections, courses, documents, kb, preview, rag_settings, tags
 from app.security import require_api_key, require_owui_bearer
 
 log = logging.getLogger(__name__)
@@ -96,6 +96,7 @@ app.include_router(courses.router, dependencies=_auth)
 app.include_router(documents.router, dependencies=_auth)
 app.include_router(kb.router, dependencies=_auth)
 app.include_router(preview.router, dependencies=_auth)
+app.include_router(rag_settings.router, dependencies=_auth)
 app.include_router(tags.router, dependencies=_auth)
 
 

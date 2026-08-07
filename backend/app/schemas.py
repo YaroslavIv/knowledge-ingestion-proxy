@@ -197,6 +197,22 @@ class BackupSummary(BaseModel):
     created_at: str
 
 
+class RagSettingsSummary(BaseModel):
+    chunk_size: int
+    chunk_overlap: int
+    embedding_engine: str
+    embedding_model: str
+
+
+class UpdateRagSettingsRequest(BaseModel):
+    # None on any field leaves that setting untouched — same "only override
+    # what's given" contract as Open WebUI's own config endpoints.
+    chunk_size: int | None = None
+    chunk_overlap: int | None = None
+    embedding_engine: str | None = None
+    embedding_model: str | None = None
+
+
 class CreateCourseProjectRequest(BaseModel):
     name: str
     product_knowledge_ids: list[str]

@@ -9,6 +9,53 @@ from app.owui_client import OwuiClient, OwuiError
 
 
 @respx.mock
+async def test_list_knowledge_bases_returns_a_flat_list_unchanged():
+    """Older Open WebUI versions: one unpaginated list, no items/total
+    wrapper at all."""
+    respx.get("http://fake-owui.test/api/v1/knowledge/").mock(
+        return_value=Response(200, json=[{"id": "kb-1", "name": "Docs"}, {"id": "kb-2", "name": "More"}])
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+    result = await client.list_knowledge_bases()
+    assert [kb["id"] for kb in result] == ["kb-1", "kb-2"]
+
+
+@respx.mock
+async def test_list_knowledge_bases_follows_pagination_across_every_page():
+    """Confirmed live: v0.11.0 caps GET /api/v1/knowledge/ at 30 items per
+    page (items/total), with no way to ask for a bigger page — a single
+    call silently truncated anything past page 1. Must keep paging until
+    every item `total` promised has actually been collected."""
+    route = respx.get("http://fake-owui.test/api/v1/knowledge/").mock(
+        side_effect=[
+            Response(200, json={"items": [{"id": f"kb-{i}"} for i in range(30)], "total": 40}),
+            Response(200, json={"items": [{"id": f"kb-{i}"} for i in range(30, 40)], "total": 40}),
+        ]
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+    result = await client.list_knowledge_bases()
+    assert len(result) == 40
+    assert [kb["id"] for kb in result] == [f"kb-{i}" for i in range(40)]
+    assert route.calls[1].request.url.params["page"] == "2"
+
+
+@respx.mock
+async def test_list_knowledge_bases_stops_if_a_later_page_comes_back_empty():
+    """A defensive stop against an infinite loop if `total` is ever wrong
+    (stale/miscounted) — an empty page always ends pagination, regardless
+    of what `total` claimed."""
+    respx.get("http://fake-owui.test/api/v1/knowledge/").mock(
+        side_effect=[
+            Response(200, json={"items": [{"id": "kb-1"}], "total": 99}),
+            Response(200, json={"items": [], "total": 99}),
+        ]
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+    result = await client.list_knowledge_bases()
+    assert [kb["id"] for kb in result] == ["kb-1"]
+
+
+@respx.mock
 async def test_list_models_unwraps_data_field():
     respx.get("http://fake-owui.test/api/v1/models").mock(
         return_value=Response(200, json={"data": [{"id": "gpt-4o-mini"}, {"id": "gpt-4o"}]})
@@ -352,3 +399,48 @@ async def test_list_knowledge_files_fallback_defaults_to_empty_list():
     client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
     result = await client.list_knowledge_files("kb-1")
     assert result == []
+
+
+@respx.mock
+async def test_update_chunking_config_sends_only_chunk_fields():
+    route = respx.post("http://fake-owui.test/api/v1/retrieval/config/update").mock(return_value=Response(200, json={}))
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+    await client.update_chunking_config(chunk_size=1200, chunk_overlap=200)
+    sent = json.loads(route.calls[0].request.content)
+    assert sent == {"CHUNK_SIZE": 1200, "CHUNK_OVERLAP": 200}
+
+
+@respx.mock
+async def test_update_embedding_config_preserves_existing_connection_details():
+    """Open WebUI's embedding-update form treats each connection sub-object
+    as all-or-nothing — sending engine/model without the real
+    ollama_config/openai_config would blank out a working connection's
+    url/key. This must fetch the current config first and pass those
+    through unchanged."""
+    respx.get("http://fake-owui.test/api/v1/retrieval/embedding").mock(
+        return_value=Response(
+            200,
+            json={
+                "RAG_EMBEDDING_ENGINE": "ollama",
+                "RAG_EMBEDDING_MODEL": "qwen3-embedding:0.6b",
+                "RAG_EMBEDDING_BATCH_SIZE": 4,
+                "ENABLE_ASYNC_EMBEDDING": True,
+                "RAG_EMBEDDING_CONCURRENT_REQUESTS": 2,
+                "openai_config": {"url": "", "key": ""},
+                "ollama_config": {"url": "http://ollama:11434", "key": "real-key"},
+                "azure_openai_config": {"url": "", "key": "", "version": ""},
+            },
+        )
+    )
+    route = respx.post("http://fake-owui.test/api/v1/retrieval/embedding/update").mock(
+        return_value=Response(200, json={})
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+    await client.update_embedding_config(engine="ollama", model="new-embedding-model")
+
+    sent = json.loads(route.calls[0].request.content)
+    assert sent["RAG_EMBEDDING_MODEL"] == "new-embedding-model"
+    assert sent["RAG_EMBEDDING_ENGINE"] == "ollama"
+    assert sent["RAG_EMBEDDING_BATCH_SIZE"] == 4
+    # the real connection details survived untouched
+    assert sent["ollama_config"] == {"url": "http://ollama:11434", "key": "real-key"}

@@ -176,6 +176,21 @@ export function reembedFile(knowledgeId, fileId) {
   return request(`/api/kb/${knowledgeId}/files/${fileId}/reembed`, { method: "POST" });
 }
 
+// --- RAG settings: chunking + embedding model, applied across the whole
+// Open WebUI instance (not per-collection) ---
+
+export function getRagSettings() {
+  return request("/api/rag-settings");
+}
+
+export function updateRagSettings(payload) {
+  return request("/api/rag-settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 // --- Local backups (originals + course outputs + this proxy's own DB) ---
 
 export function listBackups() {

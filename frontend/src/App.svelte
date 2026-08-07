@@ -9,6 +9,7 @@
   import Knowledge from "./lib/Knowledge.svelte";
   import KnowledgeDetail from "./lib/KnowledgeDetail.svelte";
   import Login from "./lib/Login.svelte";
+  import RagSettings from "./lib/RagSettings.svelte";
   import { buildPath, parseRoute } from "./lib/router.js";
 
   let section = $state("knowledge"); // "knowledge" | "courses"
@@ -183,6 +184,15 @@
         >
           Backups
         </button>
+        <button
+          type="button"
+          class="text-xs px-3 py-1.5 rounded-xl border transition {section === 'rag-settings'
+            ? 'bg-black text-white dark:bg-white dark:text-black border-transparent'
+            : 'border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-850'}"
+          onclick={() => switchSection("rag-settings")}
+        >
+          RAG Settings
+        </button>
       </nav>
 
       {#if section === "knowledge"}
@@ -203,6 +213,8 @@
         <CoE onOpenKnowledge={openKnowledgeCollection} />
       {:else if section === "backups"}
         <Backups />
+      {:else if section === "rag-settings"}
+        <RagSettings />
       {:else if openCourseProjectId}
         {#key openCourseProjectId}
           <CourseDetail projectId={openCourseProjectId} onBack={() => (openCourseProjectId = null)} onOpenKnowledgeCollection={openKnowledgeCollection} />

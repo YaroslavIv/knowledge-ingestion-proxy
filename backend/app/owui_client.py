@@ -41,11 +41,37 @@ class OwuiClient:
         return {"Authorization": f"Bearer {self._api_key}"}
 
     async def list_knowledge_bases(self) -> list[dict]:
+        """Older Open WebUI versions returned one flat, unpaginated list
+        here. Confirmed live: newer versions (v0.11.0+) paginate this
+        endpoint at a fixed, non-configurable 30 items per page (`items`/
+        `total` in the response) — a single call silently truncated
+        anything past the first page, which is exactly how 10 of a real
+        40-knowledge-base account went missing from every list/lookup this
+        proxy does. Keeps fetching subsequent pages until every item
+        `total` promised has been collected.
+        """
         async with httpx.AsyncClient(base_url=self._base_url, timeout=30) as client:
             resp = await client.get("/api/v1/knowledge/", headers=self._headers())
             self._raise_for_status(resp)
             data = resp.json()
-            return data if isinstance(data, list) else data.get("items", data)
+            if isinstance(data, list):
+                return data
+
+            items = list(data.get("items", []))
+            total = data.get("total", len(items))
+            page = 2
+            while len(items) < total:
+                next_resp = await client.get(
+                    "/api/v1/knowledge/", headers=self._headers(), params={"page": page}
+                )
+                self._raise_for_status(next_resp)
+                next_data = next_resp.json()
+                next_items = next_data.get("items", []) if isinstance(next_data, dict) else next_data
+                if not next_items:
+                    break
+                items.extend(next_items)
+                page += 1
+            return items
 
     async def create_knowledge_base(self, name: str, description: str = "") -> dict:
         async with httpx.AsyncClient(base_url=self._base_url, timeout=30) as client:
@@ -76,6 +102,61 @@ class OwuiClient:
             resp = await client.get("/api/v1/retrieval/embedding", headers=self._headers())
             self._raise_for_status(resp)
             return resp.json()
+
+    async def update_chunking_config(self, chunk_size: int, chunk_overlap: int) -> None:
+        """Open WebUI's own /config/update only overwrites the fields it's
+        given (confirmed live: every other field in its ConfigForm is
+        `| None`, and the handler falls back to the current value whenever
+        a field is None) — this never touches hybrid search, extraction,
+        reranking, or any other RAG setting, and never deletes anything.
+        Deleting/resetting live on entirely separate, explicitly-named
+        endpoints (reset/db, reset/uploads) this proxy never calls.
+        """
+        async with httpx.AsyncClient(base_url=self._base_url, timeout=30) as client:
+            resp = await client.post(
+                "/api/v1/retrieval/config/update",
+                headers=self._headers(),
+                json={"CHUNK_SIZE": chunk_size, "CHUNK_OVERLAP": chunk_overlap},
+            )
+            self._raise_for_status(resp)
+
+    async def update_embedding_config(self, engine: str | None, model: str | None) -> None:
+        """Switch which embedding engine/model Open WebUI uses for future
+        embeddings. Unlike update_chunking_config's ConfigForm, Open
+        WebUI's EmbeddingModelUpdateForm takes the connection sub-objects
+        (openai_config/ollama_config/azure_openai_config) as all-or-nothing
+        — omitting one clears its url/key rather than leaving it alone. So
+        this fetches the current config first and passes its connection
+        details straight through unchanged, only actually overriding
+        engine/model, guaranteeing a real Ollama/OpenAI/Azure endpoint or
+        key can never get silently blanked out by a call that was only
+        meant to change the model. `engine`/`model` of None keeps that
+        one's current value — the one fetch here covers both that
+        defaulting and the connection-detail passthrough, rather than
+        making the caller fetch current config separately first.
+
+        This alone does NOT touch any already-computed vectors — existing
+        files keep whatever embedding they were computed with until
+        something re-pushes their content (see reembed_file/update_file_content).
+        """
+        current = await self.get_embedding_config()
+        body = {
+            "RAG_EMBEDDING_ENGINE": engine if engine is not None else (current.get("RAG_EMBEDDING_ENGINE") or "ollama"),
+            "RAG_EMBEDDING_MODEL": model if model is not None else (current.get("RAG_EMBEDDING_MODEL") or ""),
+            "RAG_EMBEDDING_BATCH_SIZE": current.get("RAG_EMBEDDING_BATCH_SIZE", 1),
+            "ENABLE_ASYNC_EMBEDDING": current.get("ENABLE_ASYNC_EMBEDDING", True),
+            "RAG_EMBEDDING_CONCURRENT_REQUESTS": current.get("RAG_EMBEDDING_CONCURRENT_REQUESTS", 0),
+            "openai_config": current.get("openai_config"),
+            "ollama_config": current.get("ollama_config"),
+            "azure_openai_config": current.get("azure_openai_config"),
+        }
+        async with httpx.AsyncClient(base_url=self._base_url, timeout=30) as client:
+            resp = await client.post(
+                "/api/v1/retrieval/embedding/update",
+                headers=self._headers(),
+                json=body,
+            )
+            self._raise_for_status(resp)
 
     async def query_collection(self, collection_ids: list[str], query: str, k: int = 3) -> dict:
         """Pure vector search against one or more knowledge-base collections
