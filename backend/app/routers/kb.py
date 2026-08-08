@@ -28,6 +28,7 @@ from app.schemas import (
     KnowledgeLineageResponse,
     KnowledgeParentSummary,
     KnowledgeUserSummary,
+    RenameFileRequest,
     UpdateCollectionTagsRequest,
     UpdateFileContentRequest,
     UpdateFileTagsRequest,
@@ -275,6 +276,15 @@ async def clone_knowledge_base(
                 filename=upload_filename, content=content, knowledge_id=new_knowledge_id
             )
             new_file_id = result.get("id")
+            # Restore the source file's real display name (see
+            # OwuiClient.rename_file / finalize_document for why the .md
+            # extension is required on upload but purely cosmetic afterward).
+            # Best-effort: a rename failure shouldn't fail an otherwise-
+            # successful clone.
+            try:
+                await client.rename_file(new_file_id, filename)
+            except OwuiError:
+                pass
 
             db.add(
                 TrackedFile(
@@ -439,6 +449,39 @@ async def update_file_tags(
         changed=tracked.version_tag == collection.version_tag,
         last_change_method=tracked.last_change_method,
         has_pdf_original=await has_pdf_original(db, file_id),
+    )
+
+
+@router.patch("/{knowledge_id}/files/{file_id}/name", response_model=KnowledgeFileSummary)
+async def rename_knowledge_file(
+    knowledge_id: str,
+    file_id: str,
+    body: RenameFileRequest,
+    db: AsyncSession = Depends(get_db),
+    client: OwuiClient = Depends(get_owui_client),
+):
+    filename = body.filename.strip()
+    if not filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Filename must not be empty")
+
+    try:
+        await client.rename_file(file_id, filename)
+    except OwuiError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=e.detail) from e
+
+    tracked = await get_or_synthesize_tracked_file(db, file_id, knowledge_id)
+    collection = await get_or_create_tracked_collection(db, knowledge_id)
+    await db.commit()
+
+    return KnowledgeFileSummary(
+        id=file_id,
+        filename=filename,
+        version_tag=tracked.version_tag,
+        tags=list(tracked.tags or []),
+        cloned_from_file_id=tracked.cloned_from_file_id,
+        changed=tracked.version_tag == collection.version_tag,
+        last_change_method=tracked.last_change_method,
+        has_pdf_original=filename.lower().endswith(".pdf") or await has_pdf_original(db, file_id),
     )
 
 

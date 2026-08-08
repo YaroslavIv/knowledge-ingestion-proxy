@@ -120,7 +120,13 @@ class OwuiClient:
             )
             self._raise_for_status(resp)
 
-    async def update_embedding_config(self, engine: str | None, model: str | None) -> None:
+    async def update_embedding_config(
+        self,
+        engine: str | None,
+        model: str | None,
+        batch_size: int | None = None,
+        concurrent_requests: int | None = None,
+    ) -> None:
         """Switch which embedding engine/model Open WebUI uses for future
         embeddings. Unlike update_chunking_config's ConfigForm, Open
         WebUI's EmbeddingModelUpdateForm takes the connection sub-objects
@@ -130,10 +136,22 @@ class OwuiClient:
         details straight through unchanged, only actually overriding
         engine/model, guaranteeing a real Ollama/OpenAI/Azure endpoint or
         key can never get silently blanked out by a call that was only
-        meant to change the model. `engine`/`model` of None keeps that
+        meant to change the model. Every parameter of None keeps that
         one's current value — the one fetch here covers both that
         defaulting and the connection-detail passthrough, rather than
         making the caller fetch current config separately first.
+
+        `concurrent_requests` matters more than it looks: confirmed live
+        against a real corporate instance that Open WebUI's own embedding
+        code treats 0 as "no semaphore at all" (see
+        get_embedding_function in its retrieval/utils.py) — combined with
+        batch_size=1, embedding a document with hundreds of chunks fires
+        that many concurrent connections via asyncio.gather with zero
+        throttling, which reliably exhausts the container's open-file
+        limit ("Too many open files") long before it exhausts anything
+        about the target server. A real batch size (bigger single calls)
+        and a real concurrency cap (an actual semaphore) both reduce how
+        many sockets are ever open at once, for the same document.
 
         This alone does NOT touch any already-computed vectors — existing
         files keep whatever embedding they were computed with until
@@ -143,9 +161,11 @@ class OwuiClient:
         body = {
             "RAG_EMBEDDING_ENGINE": engine if engine is not None else (current.get("RAG_EMBEDDING_ENGINE") or "ollama"),
             "RAG_EMBEDDING_MODEL": model if model is not None else (current.get("RAG_EMBEDDING_MODEL") or ""),
-            "RAG_EMBEDDING_BATCH_SIZE": current.get("RAG_EMBEDDING_BATCH_SIZE", 1),
+            "RAG_EMBEDDING_BATCH_SIZE": batch_size if batch_size is not None else current.get("RAG_EMBEDDING_BATCH_SIZE", 1),
             "ENABLE_ASYNC_EMBEDDING": current.get("ENABLE_ASYNC_EMBEDDING", True),
-            "RAG_EMBEDDING_CONCURRENT_REQUESTS": current.get("RAG_EMBEDDING_CONCURRENT_REQUESTS", 0),
+            "RAG_EMBEDDING_CONCURRENT_REQUESTS": (
+                concurrent_requests if concurrent_requests is not None else current.get("RAG_EMBEDDING_CONCURRENT_REQUESTS", 0)
+            ),
             "openai_config": current.get("openai_config"),
             "ollama_config": current.get("ollama_config"),
             "azure_openai_config": current.get("azure_openai_config"),
@@ -418,6 +438,30 @@ class OwuiClient:
             disposition = resp.headers.get("content-disposition", "")
             filename = _filename_from_content_disposition(disposition) or file_id
             return resp.content, content_type, filename
+
+    async def rename_file(self, file_id: str, filename: str) -> None:
+        """Renames a file's display name only — confirmed against Open
+        WebUI's own implementation (Files.update_file_name_by_id): it just
+        overwrites the `filename`/`meta.name` columns, nothing else. No
+        re-processing, no re-embedding, no effect on already-extracted
+        content. This is what lets this proxy upload under a `.md` name
+        (required — see upload_file_to_knowledge's own docstring on why
+        the extension must match the actual content) and then immediately
+        restore the real original name for display, without re-triggering
+        extraction against a name whose extension no longer matches the
+        markdown content underneath it.
+
+        Chunks already embedded before a rename keep whatever name was
+        frozen into their metadata at embed time — this only affects the
+        file's own listed name and whatever gets embedded from now on.
+        """
+        async with httpx.AsyncClient(base_url=self._base_url, timeout=30) as client:
+            resp = await client.post(
+                f"/api/v1/files/{file_id}/rename",
+                headers=self._headers(),
+                json={"filename": filename},
+            )
+            self._raise_for_status(resp)
 
     async def remove_file_from_knowledge(self, knowledge_id: str, file_id: str) -> None:
         """Unlink a file from a knowledge base and delete it outright

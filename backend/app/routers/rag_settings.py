@@ -15,6 +15,8 @@ async def _current_settings(client: OwuiClient) -> RagSettingsSummary:
         chunk_overlap=retrieval.get("CHUNK_OVERLAP") or 100,
         embedding_engine=embedding.get("RAG_EMBEDDING_ENGINE") or "",
         embedding_model=embedding.get("RAG_EMBEDDING_MODEL") or "",
+        embedding_batch_size=embedding.get("RAG_EMBEDDING_BATCH_SIZE") or 1,
+        embedding_concurrent_requests=embedding.get("RAG_EMBEDDING_CONCURRENT_REQUESTS") or 0,
     )
 
 
@@ -50,8 +52,18 @@ async def update_rag_settings(body: UpdateRagSettingsRequest, client: OwuiClient
                 else (current.get("CHUNK_OVERLAP") or 100),
             )
 
-        if body.embedding_model is not None or body.embedding_engine is not None:
-            await client.update_embedding_config(engine=body.embedding_engine, model=body.embedding_model)
+        if (
+            body.embedding_model is not None
+            or body.embedding_engine is not None
+            or body.embedding_batch_size is not None
+            or body.embedding_concurrent_requests is not None
+        ):
+            await client.update_embedding_config(
+                engine=body.embedding_engine,
+                model=body.embedding_model,
+                batch_size=body.embedding_batch_size,
+                concurrent_requests=body.embedding_concurrent_requests,
+            )
 
         return await _current_settings(client)
     except OwuiError as e:

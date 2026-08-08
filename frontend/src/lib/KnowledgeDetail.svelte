@@ -15,10 +15,11 @@
     patchDocument,
     previewChunks,
     reembedFile,
+    renameKnowledgeFile,
     reparseKnowledgeFile,
     updateFileTags,
     updateKnowledgeFile,
-    uploadDocument,
+    uploadDocumentWithProgress,
   } from "./api.js";
   import HighlightedEditor from "./HighlightedEditor.svelte";
   import { suggestNextVersionTag } from "./versionTag.js";
@@ -146,6 +147,16 @@
   let editingTagsForFileId = $state(null);
   let newTagInput = $state("");
 
+  // --- display-name editing ---
+  // Open WebUI itself only ever stores whatever name is set here — see
+  // OwuiClient.rename_file on the backend for why the underlying stored
+  // content still needs a .md extension while the display name can be
+  // anything (e.g. restoring "datasheet.pdf" for an external process that
+  // maps chunk sources back to real file paths).
+  let editingNameForFileId = $state(null);
+  let renameInput = $state("");
+  let renamingFileId = $state(null);
+
   async function loadKbDetail() {
     try {
       const detail = await getKnowledgeBaseDetail(knowledgeId);
@@ -221,6 +232,24 @@
       files = files.map((f) => (f.id === file.id ? { ...f, tags } : f));
     } catch (e) {
       filesError = e.message;
+    }
+  }
+
+  async function saveRename(file) {
+    const filename = renameInput.trim();
+    if (!filename || filename === file.filename) {
+      editingNameForFileId = null;
+      return;
+    }
+    renamingFileId = file.id;
+    try {
+      const updated = await renameKnowledgeFile(knowledgeId, file.id, filename);
+      files = files.map((f) => (f.id === file.id ? { ...f, filename, has_pdf_original: updated.has_pdf_original } : f));
+      editingNameForFileId = null;
+    } catch (e) {
+      filesError = e.message;
+    } finally {
+      renamingFileId = null;
     }
   }
 
@@ -357,6 +386,17 @@
   let newError = $state(null);
   let newResult = $state(null);
   let newSaveTimer = null;
+
+  // --- upload-button fill effect ---
+  // uploadingFile tracks the picked file itself (not just a boolean) so the
+  // button can keep showing its name while it fills; uploadProgress is real
+  // bytes-sent/bytes-total from the XHR (see uploadDocumentWithProgress) —
+  // it reaches 1 as soon as the network transfer finishes, which for a big
+  // PDF can still be well before the server's own parsing finishes, so the
+  // bar then switches to an indeterminate pulse instead of just sitting at
+  // 100% looking stalled.
+  let uploadingFile = $state(null);
+  let uploadProgress = $state(0);
 
   async function loadFiles() {
     filesLoading = true;
@@ -592,9 +632,13 @@
     const file = event.target.files?.[0];
     if (!file) return;
     newError = "";
+    uploadingFile = file;
+    uploadProgress = 0;
     try {
       loadOriginalPreview(file);
-      const created = await uploadDocument(file);
+      const created = await uploadDocumentWithProgress(file, (fraction) => {
+        uploadProgress = fraction;
+      });
       sessionId = created.session_id;
       newFilename = created.filename;
       newText = created.text;
@@ -605,6 +649,8 @@
       doNewSave();
     } catch (e) {
       newError = e.message;
+    } finally {
+      uploadingFile = null;
     }
   }
 
@@ -968,6 +1014,23 @@
                 </button>
                 <button
                   type="button"
+                  aria-label="Rename file"
+                  class="p-1 mr-1.5 rounded-full hover:bg-gray-500/20 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition shrink-0"
+                  onclick={() => {
+                    editingNameForFileId = editingNameForFileId === f.id ? null : f.id;
+                    renameInput = f.filename;
+                  }}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125"
+                    />
+                  </svg>
+                </button>
+                <button
+                  type="button"
                   aria-label="Delete file"
                   class="p-1 mr-1.5 rounded-full hover:bg-red-500/20 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition disabled:opacity-40 shrink-0"
                   disabled={deletingFileId === f.id}
@@ -1027,6 +1090,36 @@
                   + tag
                 </button>
               </div>
+
+              {#if editingNameForFileId === f.id}
+                <div class="flex gap-1 px-2.5 pb-2">
+                  <input
+                    class="flex-1 min-w-0 text-xs px-2 py-1 rounded-lg bg-gray-50 dark:bg-gray-900 outline-hidden"
+                    placeholder="file name"
+                    bind:value={renameInput}
+                    disabled={renamingFileId === f.id}
+                    onkeydown={(e) => {
+                      if (e.key === "Enter") saveRename(f);
+                      if (e.key === "Escape") editingNameForFileId = null;
+                    }}
+                  />
+                  <button
+                    type="button"
+                    class="text-xs px-2 py-1 rounded-lg bg-gray-50 dark:bg-gray-900 shrink-0 disabled:opacity-40"
+                    disabled={renamingFileId === f.id}
+                    onclick={() => saveRename(f)}
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    class="text-xs px-2 py-1 rounded-lg bg-gray-50 dark:bg-gray-900 shrink-0"
+                    onclick={() => (editingNameForFileId = null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              {/if}
 
               {#if editingTagsForFileId === f.id}
                 <div class="flex gap-1 px-2.5 pb-2">
@@ -1161,7 +1254,30 @@
               {replaceTargetFileId ? `Replace "${replaceTargetFilename}"` : "Upload a document"}
             </div>
             <div class="text-xs text-gray-500">PDF, DOCX, TXT or Markdown</div>
-            <input type="file" accept=".pdf,.docx,.txt,.md" onchange={handleNewFileChange} />
+            <label
+              class="upload-fill-btn self-start"
+              class:processing={uploadingFile && uploadProgress >= 1}
+              style={uploadingFile ? `--upload-fill: ${Math.min(uploadProgress, 1) * 100}%` : ""}
+            >
+              <input
+                type="file"
+                accept=".pdf,.docx,.txt,.md"
+                onchange={handleNewFileChange}
+                disabled={!!uploadingFile}
+                hidden
+              />
+              <span class="upload-fill-btn-label">
+                {#if uploadingFile}
+                  {#if uploadProgress < 1}
+                    Uploading {uploadingFile.name} — {Math.round(uploadProgress * 100)}%
+                  {:else}
+                    Processing {uploadingFile.name}…
+                  {/if}
+                {:else}
+                  Choose file to upload
+                {/if}
+              </span>
+            </label>
           </div>
         {:else}
           <div class="flex items-center gap-3">
@@ -1226,3 +1342,65 @@
     </div>
   </div>
 </div>
+
+<style>
+  /* Fills left-to-right as the real upload bytes go out, so a big file shows
+     visible progress instead of the button just freezing. Once the network
+     transfer hits 100% but the server is still parsing (no progress signal
+     for that part), it switches to an indeterminate sweep so it still reads
+     as "working", not "stuck". */
+  .upload-fill-btn {
+    position: relative;
+    display: inline-block;
+    overflow: hidden;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 500;
+    border: 1px solid var(--owui-accent);
+    border-radius: 0.65rem;
+    padding: 0.5rem 0.9rem;
+    color: var(--owui-accent-text);
+    background: var(--owui-accent);
+  }
+
+  .upload-fill-btn:has(input:disabled) {
+    cursor: not-allowed;
+  }
+
+  .upload-fill-btn-label {
+    position: relative;
+    z-index: 1;
+  }
+
+  /* The "unfilled" remainder — a dim overlay eating into the button from the
+     right, shrinking as real upload bytes go out. Dimming instead of a hard
+     two-color split keeps the label text readable throughout, since the
+     button's own background/text colors never change. */
+  .upload-fill-btn::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: calc(100% - var(--upload-fill, 100%));
+    background: color-mix(in srgb, var(--owui-bg-secondary) 70%, transparent);
+    transition: width 0.15s linear;
+    pointer-events: none;
+  }
+
+  .upload-fill-btn.processing::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+    animation: upload-sweep 1.1s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  @keyframes upload-sweep {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(100%);
+    }
+  }
+</style>

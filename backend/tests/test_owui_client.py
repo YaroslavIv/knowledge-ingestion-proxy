@@ -342,6 +342,24 @@ async def test_upload_raw_file_surfaces_owui_errors():
 
 
 @respx.mock
+async def test_rename_file_sends_the_new_filename():
+    route = respx.post("http://fake-owui.test/api/v1/files/file-1/rename").mock(return_value=Response(200, json={}))
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+    await client.rename_file("file-1", "datasheet.pdf")
+    assert json.loads(route.calls[0].request.content) == {"filename": "datasheet.pdf"}
+
+
+@respx.mock
+async def test_rename_file_surfaces_owui_errors():
+    respx.post("http://fake-owui.test/api/v1/files/file-1/rename").mock(
+        return_value=Response(404, json={"detail": "Not found"})
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+    with pytest.raises(OwuiError):
+        await client.rename_file("file-1", "datasheet.pdf")
+
+
+@respx.mock
 async def test_delete_file_calls_the_standalone_delete_endpoint():
     route = respx.delete("http://fake-owui.test/api/v1/files/raw-1").mock(return_value=Response(200))
     client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
@@ -444,3 +462,36 @@ async def test_update_embedding_config_preserves_existing_connection_details():
     assert sent["RAG_EMBEDDING_BATCH_SIZE"] == 4
     # the real connection details survived untouched
     assert sent["ollama_config"] == {"url": "http://ollama:11434", "key": "real-key"}
+
+
+@respx.mock
+async def test_update_embedding_config_can_override_batch_size_and_concurrency():
+    """Open WebUI treats concurrent_requests=0 as "no limit at all", not
+    "sequential" — this must be explicitly settable, not just preserved,
+    since 1/0 (this method's own defaults when nothing else has ever
+    configured it) is exactly the combination that opens one unthrottled
+    connection per chunk and exhausts open files on any sizeable document."""
+    respx.get("http://fake-owui.test/api/v1/retrieval/embedding").mock(
+        return_value=Response(
+            200,
+            json={
+                "RAG_EMBEDDING_ENGINE": "ollama",
+                "RAG_EMBEDDING_MODEL": "qwen3-embedding:0.6b",
+                "RAG_EMBEDDING_BATCH_SIZE": 1,
+                "RAG_EMBEDDING_CONCURRENT_REQUESTS": 0,
+                "openai_config": {"url": "", "key": ""},
+                "ollama_config": {"url": "http://172.17.0.1:11434", "key": ""},
+                "azure_openai_config": {"url": "", "key": "", "version": ""},
+            },
+        )
+    )
+    route = respx.post("http://fake-owui.test/api/v1/retrieval/embedding/update").mock(
+        return_value=Response(200, json={})
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+    await client.update_embedding_config(engine=None, model=None, batch_size=16, concurrent_requests=4)
+
+    sent = json.loads(route.calls[0].request.content)
+    assert sent["RAG_EMBEDDING_BATCH_SIZE"] == 16
+    assert sent["RAG_EMBEDDING_CONCURRENT_REQUESTS"] == 4
+    assert sent["RAG_EMBEDDING_MODEL"] == "qwen3-embedding:0.6b"  # left alone

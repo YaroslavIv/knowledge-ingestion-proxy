@@ -167,6 +167,20 @@ async def finalize_document(
                 knowledge_id=knowledge_id,
             )
             owui_file_id = result.get("id")
+            # Uploading under the real original name (e.g. "datasheet.pdf")
+            # would make Open WebUI try to parse this proxy's own extracted
+            # *text* as if it were a real PDF, by extension (see
+            # upload_file_to_knowledge's docstring) — .md is required for
+            # that to succeed. Renaming afterward is purely cosmetic (see
+            # OwuiClient.rename_file) and doesn't touch what already got
+            # extracted/embedded, so the file list can show "datasheet.pdf"
+            # again without corrupting the actual processing. Best-effort:
+            # a rename failure here shouldn't fail an otherwise-successful
+            # upload the user is still waiting on.
+            try:
+                await client.rename_file(owui_file_id, session.original_filename)
+            except OwuiError:
+                pass
     except OwuiError as e:
         session.status = "failed"
         session.error_message = e.detail

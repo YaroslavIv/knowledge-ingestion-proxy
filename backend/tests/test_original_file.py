@@ -51,6 +51,7 @@ async def test_finalize_caches_the_true_pre_redaction_original(client):
     respx.post("http://fake-owui.test/api/v1/files/").mock(
         return_value=Response(200, json={"id": "file-new", "filename": "doc.md"})
     )
+    respx.post("http://fake-owui.test/api/v1/files/file-new/rename").mock(return_value=Response(200, json={}))
 
     files = {"file": ("doc.txt", b"secret: ABC123\nnormal content", "text/plain")}
     upload_resp = await client.post("/api/documents", files=files)
@@ -88,6 +89,9 @@ async def _ingest_one(client, filename, content_type, data, target_file_id):
     """
     respx.post("http://fake-owui.test/api/v1/files/").mock(
         return_value=Response(200, json={"id": target_file_id, "filename": "doc.md"})
+    )
+    respx.post(f"http://fake-owui.test/api/v1/files/{target_file_id}/rename").mock(
+        return_value=Response(200, json={})
     )
     upload_resp = await client.post("/api/documents", files={"file": (filename, data, content_type)})
     session_id = upload_resp.json()["session_id"]
@@ -151,6 +155,7 @@ async def test_replace_file_recaches_new_original_and_drops_old_one(client):
     respx.post("http://fake-owui.test/api/v1/files/").mock(
         return_value=Response(200, json={"id": "file-a", "filename": "a.md"})
     )
+    respx.post("http://fake-owui.test/api/v1/files/file-a/rename").mock(return_value=Response(200, json={}))
     files = {"file": ("first.txt", b"first version", "text/plain")}
     upload_resp = await client.post("/api/documents", files=files)
     session_id = upload_resp.json()["session_id"]
@@ -186,6 +191,7 @@ async def test_delete_file_removes_cached_original(client):
     respx.post("http://fake-owui.test/api/v1/files/").mock(
         return_value=Response(200, json={"id": "file-a", "filename": "a.md"})
     )
+    respx.post("http://fake-owui.test/api/v1/files/file-a/rename").mock(return_value=Response(200, json={}))
     files = {"file": ("first.txt", b"content", "text/plain")}
     upload_resp = await client.post("/api/documents", files=files)
     session_id = upload_resp.json()["session_id"]

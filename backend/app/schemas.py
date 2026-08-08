@@ -145,6 +145,10 @@ class UpdateFileTagsRequest(BaseModel):
     tags: list[str]
 
 
+class RenameFileRequest(BaseModel):
+    filename: str
+
+
 class UpdateCollectionTagsRequest(BaseModel):
     tags: list[str]
 
@@ -202,6 +206,13 @@ class RagSettingsSummary(BaseModel):
     chunk_overlap: int
     embedding_engine: str
     embedding_model: str
+    # How many chunks go into one embedding HTTP call, and how many such
+    # calls Open WebUI's own embedding code is allowed to run at once — see
+    # OwuiClient.update_embedding_config's docstring for why both matter
+    # far more than they look (0 concurrent_requests means literally no
+    # limit at all on Open WebUI's side, not "sequential").
+    embedding_batch_size: int
+    embedding_concurrent_requests: int
 
 
 class UpdateRagSettingsRequest(BaseModel):
@@ -211,6 +222,8 @@ class UpdateRagSettingsRequest(BaseModel):
     chunk_overlap: int | None = None
     embedding_engine: str | None = None
     embedding_model: str | None = None
+    embedding_batch_size: int | None = None
+    embedding_concurrent_requests: int | None = None
 
 
 class CreateCourseProjectRequest(BaseModel):

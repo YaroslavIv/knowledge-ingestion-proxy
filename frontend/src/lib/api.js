@@ -102,10 +102,47 @@ export function deleteConnection(id) {
   return request(`/api/connections/${id}`, { method: "DELETE" });
 }
 
-export function uploadDocument(file) {
+// fetch() gives no visibility into how much of the request body has actually
+// gone out over the wire, which is exactly what a large-file upload button
+// needs to fill progressively instead of just freezing until the whole
+// request (upload + server-side parsing) completes. XMLHttpRequest's
+// upload.onprogress is the one thing in the browser that still exposes real
+// byte-level progress, so this bypasses request() and talks to XHR directly
+// for this one call.
+export function uploadDocumentWithProgress(file, onProgress) {
   const form = new FormData();
   form.append("file", file);
-  return request("/api/documents", { method: "POST", body: form });
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BASE_URL}/api/documents`);
+    for (const [key, value] of Object.entries(authHeaders())) {
+      xhr.setRequestHeader(key, value);
+    }
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) onProgress(event.loaded / event.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status === 401) {
+        clearToken();
+        window.location.reload();
+        return;
+      }
+      let body = null;
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        // ignore, body stays null
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(body);
+      } else {
+        reject(new Error(body?.detail || xhr.statusText || "Upload failed"));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.send(form);
+  });
 }
 
 export function getDocument(sessionId) {
@@ -214,6 +251,14 @@ export function updateFileTags(knowledgeId, fileId, tags) {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tags }),
+  });
+}
+
+export function renameKnowledgeFile(knowledgeId, fileId, filename) {
+  return request(`/api/kb/${knowledgeId}/files/${fileId}/name`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename }),
   });
 }
 

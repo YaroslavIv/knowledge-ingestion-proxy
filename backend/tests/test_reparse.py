@@ -16,6 +16,7 @@ async def test_reparse_uses_the_cached_true_original_and_returns_fresh_text_with
     respx.post("http://fake-owui.test/api/v1/files/").mock(
         return_value=Response(200, json={"id": "file-new", "filename": "doc.md"})
     )
+    respx.post("http://fake-owui.test/api/v1/files/file-new/rename").mock(return_value=Response(200, json={}))
 
     files = {"file": ("doc.txt", b"Line one.\nLine two.", "text/plain")}
     upload_resp = await client.post("/api/documents", files=files)

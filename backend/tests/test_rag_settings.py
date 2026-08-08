@@ -28,6 +28,8 @@ async def test_get_rag_settings_reports_current_chunk_and_embedding_config(clien
         "chunk_overlap": 150,
         "embedding_engine": "ollama",
         "embedding_model": "qwen3-embedding:0.6b",
+        "embedding_batch_size": 1,
+        "embedding_concurrent_requests": 0,
     }
 
 
@@ -114,6 +116,63 @@ async def test_update_rag_settings_switches_embedding_model_without_wiping_conne
     sent = json.loads(embedding_route.calls[0].request.content)
     assert sent["RAG_EMBEDDING_MODEL"] == "new-model:latest"
     assert sent["ollama_config"] == {"url": "http://ollama:11434", "key": "real-key"}
+
+
+@respx.mock
+async def test_update_rag_settings_raises_batch_size_and_caps_concurrency(client):
+    """Confirmed live: Open WebUI treats concurrent_requests=0 as "no limit
+    at all" (not "sequential") — combined with batch_size=1, embedding a
+    many-chunk document opens one connection per chunk with zero
+    throttling, reliably exhausting the container's open-file limit. This
+    must be settable from here without needing a raw API call."""
+    respx.get("http://fake-owui.test/api/v1/retrieval/config").mock(
+        return_value=Response(200, json={"CHUNK_SIZE": 1000, "CHUNK_OVERLAP": 150})
+    )
+    respx.get("http://fake-owui.test/api/v1/retrieval/embedding").mock(
+        side_effect=[
+            Response(
+                200,
+                json={
+                    "RAG_EMBEDDING_ENGINE": "ollama",
+                    "RAG_EMBEDDING_MODEL": "qwen3-embedding:0.6b",
+                    "RAG_EMBEDDING_BATCH_SIZE": 1,
+                    "RAG_EMBEDDING_CONCURRENT_REQUESTS": 0,
+                    "openai_config": {"url": "", "key": ""},
+                    "ollama_config": {"url": "http://172.17.0.1:11434", "key": ""},
+                    "azure_openai_config": {"url": "", "key": "", "version": ""},
+                },
+            ),
+            Response(
+                200,
+                json={
+                    "RAG_EMBEDDING_ENGINE": "ollama",
+                    "RAG_EMBEDDING_MODEL": "qwen3-embedding:0.6b",
+                    "RAG_EMBEDDING_BATCH_SIZE": 16,
+                    "RAG_EMBEDDING_CONCURRENT_REQUESTS": 4,
+                    "openai_config": {"url": "", "key": ""},
+                    "ollama_config": {"url": "http://172.17.0.1:11434", "key": ""},
+                    "azure_openai_config": {"url": "", "key": "", "version": ""},
+                },
+            ),
+        ]
+    )
+    embedding_route = respx.post("http://fake-owui.test/api/v1/retrieval/embedding/update").mock(
+        return_value=Response(200, json={})
+    )
+
+    resp = await client.post(
+        "/api/rag-settings", json={"embedding_batch_size": 16, "embedding_concurrent_requests": 4}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["embedding_batch_size"] == 16
+    assert resp.json()["embedding_concurrent_requests"] == 4
+
+    sent = json.loads(embedding_route.calls[0].request.content)
+    assert sent["RAG_EMBEDDING_BATCH_SIZE"] == 16
+    assert sent["RAG_EMBEDDING_CONCURRENT_REQUESTS"] == 4
+    # the model/engine and connection details were left exactly as they were
+    assert sent["RAG_EMBEDDING_MODEL"] == "qwen3-embedding:0.6b"
+    assert sent["ollama_config"] == {"url": "http://172.17.0.1:11434", "key": ""}
 
 
 @respx.mock

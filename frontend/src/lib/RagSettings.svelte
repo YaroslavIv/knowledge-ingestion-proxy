@@ -12,6 +12,8 @@
 
   let embeddingEngine = $state("");
   let embeddingModel = $state("");
+  let embeddingBatchSize = $state("");
+  let embeddingConcurrentRequests = $state("");
   let embeddingBusy = $state(false);
   let embeddingError = $state(null);
   let embeddingSaved = $state(false);
@@ -24,6 +26,8 @@
       chunkOverlap = String(settings.chunk_overlap);
       embeddingEngine = settings.embedding_engine;
       embeddingModel = settings.embedding_model;
+      embeddingBatchSize = String(settings.embedding_batch_size);
+      embeddingConcurrentRequests = String(settings.embedding_concurrent_requests);
     } catch (e) {
       loadError = e.message;
     }
@@ -50,7 +54,12 @@
     embeddingError = null;
     embeddingSaved = false;
     try {
-      settings = await updateRagSettings({ embedding_engine: embeddingEngine, embedding_model: embeddingModel });
+      settings = await updateRagSettings({
+        embedding_engine: embeddingEngine,
+        embedding_model: embeddingModel,
+        embedding_batch_size: Number(embeddingBatchSize),
+        embedding_concurrent_requests: Number(embeddingConcurrentRequests),
+      });
       embeddingSaved = true;
     } catch (e) {
       embeddingError = e.message;
@@ -216,12 +225,36 @@
             bind:value={embeddingModel}
           />
         </div>
+        <div class="flex flex-col gap-0.5">
+          <label for="embedding-batch-size" class="text-xs text-gray-500">Batch size (chunks per request)</label>
+          <input
+            id="embedding-batch-size"
+            type="number"
+            min="1"
+            class="text-sm px-2 py-1.5 rounded-xl bg-gray-50 dark:bg-gray-850 outline-hidden"
+            bind:value={embeddingBatchSize}
+          />
+        </div>
+        <div class="flex flex-col gap-0.5">
+          <label for="embedding-concurrency" class="text-xs text-gray-500">Max concurrent requests</label>
+          <input
+            id="embedding-concurrency"
+            type="number"
+            min="1"
+            class="text-sm px-2 py-1.5 rounded-xl bg-gray-50 dark:bg-gray-850 outline-hidden"
+            bind:value={embeddingConcurrentRequests}
+          />
+          <span class="text-[0.65rem] text-gray-400">
+            0 here means Open WebUI applies no limit at all — with batch size 1, embedding a large document can open
+            one connection per chunk at once and exhaust the server's open-file limit. Keep this at 1 or higher.
+          </span>
+        </div>
       </div>
       <div class="flex items-center gap-2">
         <button
           type="button"
           class="primary flex items-center gap-1.5 px-4"
-          disabled={embeddingBusy || !embeddingModel.trim()}
+          disabled={embeddingBusy || !embeddingModel.trim() || !embeddingBatchSize || !embeddingConcurrentRequests}
           onclick={saveEmbedding}
         >
           {#if embeddingBusy}{@render spinner()}{/if}

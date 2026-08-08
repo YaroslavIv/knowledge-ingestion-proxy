@@ -83,6 +83,7 @@ async def test_finalize_new_file_is_tracked_as_introduced_in_current_version(cli
     respx.post("http://fake-owui.test/api/v1/files/").mock(
         return_value=Response(200, json={"id": "file-new", "filename": "doc.md"})
     )
+    respx.post("http://fake-owui.test/api/v1/files/file-new/rename").mock(return_value=Response(200, json={}))
 
     files = {"file": ("doc.txt", b"hello world", "text/plain")}
     upload_resp = await client.post("/api/documents", files=files)
@@ -171,6 +172,8 @@ async def test_clone_knowledge_base_copies_files_with_inherited_tag(client):
             Response(200, json={"id": "file-b2", "filename": "b.md"}),
         ]
     )
+    respx.post("http://fake-owui.test/api/v1/files/file-a2/rename").mock(return_value=Response(200, json={}))
+    respx.post("http://fake-owui.test/api/v1/files/file-b2/rename").mock(return_value=Response(200, json={}))
     respx.post("http://fake-owui.test/api/v1/knowledge/kb-new/file/add").mock(return_value=Response(200))
 
     clone_resp = await client.post("/api/kb/kb-old/clone", json={"name": "Docs v2", "version_tag": "uvss 2.1"})
@@ -267,6 +270,8 @@ async def test_clone_skips_a_file_with_no_extracted_content_and_still_copies_the
             Response(200),
         ]
     )
+    respx.post("http://fake-owui.test/api/v1/files/file-a2/rename").mock(return_value=Response(200, json={}))
+    respx.post("http://fake-owui.test/api/v1/files/file-b2/rename").mock(return_value=Response(200, json={}))
 
     resp = await client.post("/api/kb/kb-old/clone", json={"name": "Docs v2", "version_tag": "v1.1"})
     assert resp.status_code == 200

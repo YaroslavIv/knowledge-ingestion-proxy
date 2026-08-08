@@ -10,6 +10,7 @@ async def test_finalize_strips_redacted_text_before_sending_to_owui(client):
         return_value=Response(200, json={"id": "file-999", "filename": "doc.md"})
     )
     respx.post("http://fake-owui.test/api/v1/knowledge/kb-1/file/add").mock(return_value=Response(200))
+    respx.post("http://fake-owui.test/api/v1/files/file-999/rename").mock(return_value=Response(200, json={}))
 
     files = {"file": ("doc.md", b"# Heading\n\nkeep this SECRET-VALUE drop this\n", "text/markdown")}
     resp = await client.post("/api/documents", files=files)
