@@ -5,8 +5,18 @@ from app.ask_history import list_ask_joint_history, record_ask_joint
 from app.db import get_db
 from app.deps import get_owui_client
 from app.owui_client import OwuiClient, OwuiError
-from app.retrieval_router import ask_joint, ask_with_routing, search_collections
-from app.schemas import AskJointLogItem, AskJointRequest, AskRoutedRequest, SearchRequest, SearchResponse, SearchResultItem
+from app.retrieval_router import ask_joint, ask_with_routing, compare_searches, search_collections
+from app.schemas import (
+    AskJointLogItem,
+    AskJointRequest,
+    AskRoutedRequest,
+    CompareRequest,
+    CompareResponse,
+    CompareSummary,
+    SearchRequest,
+    SearchResponse,
+    SearchResultItem,
+)
 from app.versioning import resolve_collection_ids_by_tag
 
 router = APIRouter(prefix="/api/ask", tags=["ask"])
@@ -127,3 +137,25 @@ async def search_endpoint(body: SearchRequest, db: AsyncSession = Depends(get_db
         return SearchResponse(results=[SearchResultItem(**r) for r in results])
     except OwuiError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=e.detail) from e
+
+
+@router.post("/compare", response_model=CompareResponse)
+async def compare_endpoint(body: CompareRequest, db: AsyncSession = Depends(get_db), client: OwuiClient = Depends(get_owui_client)):
+    """Runs two independent retrieval-only searches and diffs them — for
+    checking retrieval stability across paraphrases, translations, or
+    reordered wording of "the same" question. See
+    app/retrieval_router.py's compare_searches for what the diff contains.
+
+    Candidates come either from `collection_ids` directly, or from `tag`,
+    same resolution as search above."""
+    try:
+        collection_ids = await _resolve_collection_ids(body, db, client)
+        result = await compare_searches(client, collection_ids, body.query_a, body.query_b, k=body.k)
+    except OwuiError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=e.detail) from e
+
+    return CompareResponse(
+        results_a=[SearchResultItem(**r) for r in result["results_a"]],
+        results_b=[SearchResultItem(**r) for r in result["results_b"]],
+        comparison=CompareSummary(**result["comparison"]),
+    )

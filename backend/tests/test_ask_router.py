@@ -1,5 +1,6 @@
 import json
 
+import pytest
 import respx
 from httpx import Response
 
@@ -276,3 +277,56 @@ async def test_ask_route_and_search_do_not_record_joint_history(client):
 
     history_resp = await client.get("/api/ask/joint/history")
     assert history_resp.json() == []
+
+
+@respx.mock
+async def test_compare_endpoint_returns_both_result_sets_and_a_diff(client):
+    respx.post("http://fake-owui.test/api/v1/retrieval/query/collection").mock(
+        side_effect=[
+            Response(
+                200,
+                json={
+                    "documents": [["shared chunk"]],
+                    "distances": [[0.9]],
+                    "metadatas": [[{"file_id": "file-1", "name": "doc.pdf"}]],
+                },
+            ),
+            Response(
+                200,
+                json={
+                    "documents": [["shared chunk"]],
+                    "distances": [[0.6]],
+                    "metadatas": [[{"file_id": "file-1", "name": "doc.pdf"}]],
+                },
+            ),
+        ]
+    )
+    resp = await client.post(
+        "/api/ask/compare",
+        json={"collection_ids": ["kb-a"], "query_a": "question A", "query_b": "question B"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["results_a"][0]["document"] == "shared chunk"
+    assert body["results_b"][0]["score"] == 0.6
+    assert body["comparison"]["file_overlap"] == 1
+    assert body["comparison"]["file_total"] == 1
+    match = body["comparison"]["matches"][0]
+    assert match["chunk_distance"] == 0
+    assert match["score_delta"] == pytest.approx(0.3)
+
+
+@respx.mock
+async def test_compare_endpoint_502s_on_owui_failure(client):
+    respx.post("http://fake-owui.test/api/v1/retrieval/query/collection").mock(
+        return_value=Response(400, json={"detail": "boom"})
+    )
+    resp = await client.post(
+        "/api/ask/compare", json={"collection_ids": ["kb-a"], "query_a": "a", "query_b": "b"}
+    )
+    assert resp.status_code == 502
+
+
+async def test_compare_endpoint_requires_collection_ids_or_tag(client):
+    resp = await client.post("/api/ask/compare", json={"query_a": "a", "query_b": "b"})
+    assert resp.status_code == 400

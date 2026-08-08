@@ -13,6 +13,8 @@ Two modes:
 """
 from __future__ import annotations
 
+from app.chunking.preview import ChunkRange, compute_chunk_preview
+from app.config_cache import get_chunking_config
 from app.owui_client import OwuiClient
 
 
@@ -110,3 +112,117 @@ async def search_collections(client: OwuiClient, collection_ids: list[str], quer
             }
         )
     return results
+
+
+def _chunk_index_for_text(full_text: str, ranges: list[ChunkRange], chunk_text: str) -> int | None:
+    """Which of this file's real chunk boundaries a retrieved chunk's text
+    falls into — an exact slice match first (the common case: the retrieved
+    text IS one of these ranges verbatim), falling back to locating the
+    text's own offset and finding which computed range contains it (covers
+    the rare case where our approximate splitter's boundaries drift slightly
+    from Open WebUI's real ones — see compute_chunk_preview's docstring)."""
+    for i, r in enumerate(ranges):
+        if full_text[r.start : r.end] == chunk_text:
+            return i
+    offset = full_text.find(chunk_text)
+    if offset == -1:
+        return None
+    for i, r in enumerate(ranges):
+        if r.start <= offset < r.end:
+            return i
+    return None
+
+
+async def _chunk_ranges_for_file(client: OwuiClient, cache: dict, file_id: str) -> tuple[str, list[ChunkRange]]:
+    if file_id not in cache:
+        full_text = await client.get_file_content(file_id)
+        config = await get_chunking_config(client)
+        cache[file_id] = (full_text, compute_chunk_preview(full_text, config))
+    return cache[file_id]
+
+
+async def _chunk_distance(client: OwuiClient, cache: dict, file_id: str, text_a: str, text_b: str) -> int | None:
+    """How many chunk-widths apart two retrieved chunks from the same file
+    really are — 0 for the literal same chunk, otherwise the gap between
+    their positions in that file's real chunking (see compute_chunk_preview),
+    or None if either couldn't be located (e.g. the file changed since these
+    were embedded). Lets a robustness check ("do two phrasings of the same
+    question retrieve the same content?") distinguish "same chunk" from
+    "neighboring chunk" from "unrelated part of the file", not just
+    same-file-or-not.
+    """
+    if text_a == text_b:
+        return 0
+    full_text, ranges = await _chunk_ranges_for_file(client, cache, file_id)
+    idx_a = _chunk_index_for_text(full_text, ranges, text_a)
+    idx_b = _chunk_index_for_text(full_text, ranges, text_b)
+    if idx_a is None or idx_b is None:
+        return None
+    return abs(idx_a - idx_b)
+
+
+async def compare_searches(
+    client: OwuiClient, collection_ids: list[str], query_a: str, query_b: str, k: int = 10
+) -> dict:
+    """Runs two independent retrieval-only searches (see search_collections)
+    and diffs them — built for checking retrieval stability across
+    paraphrases, translations, or reordered wording of "the same" question.
+
+    Returns `{results_a, results_b, comparison}`: the two plain result lists,
+    plus a `comparison` with `file_overlap`/`file_total` (how many distinct
+    files show up in both result sets vs either), and `matches` — chunk-level
+    pairings across the two sets for every file present in both, greedily
+    paired by chunk proximity (see _chunk_distance), each carrying both
+    scores and their difference alongside the chunk distance.
+    """
+    results_a = await search_collections(client, collection_ids, query_a, k=k)
+    results_b = await search_collections(client, collection_ids, query_b, k=k)
+
+    files_a = {r["file_id"] for r in results_a if r["file_id"]}
+    files_b = {r["file_id"] for r in results_b if r["file_id"]}
+    shared_files = files_a & files_b
+
+    cache: dict = {}
+    matches = []
+    for file_id in shared_files:
+        a_chunks = [(i, r) for i, r in enumerate(results_a) if r["file_id"] == file_id]
+        b_chunks = [(i, r) for i, r in enumerate(results_b) if r["file_id"] == file_id]
+        used_b: set[int] = set()
+
+        for _, a in a_chunks:
+            best: tuple[int, int, dict] | None = None
+            for b_i, b in b_chunks:
+                if b_i in used_b:
+                    continue
+                distance = await _chunk_distance(client, cache, file_id, a["document"], b["document"])
+                if distance is None:
+                    continue
+                if best is None or distance < best[0]:
+                    best = (distance, b_i, b)
+            if best is not None:
+                distance, b_i, b = best
+                used_b.add(b_i)
+                matches.append(
+                    {
+                        "file_id": file_id,
+                        "filename": a["filename"] or b["filename"],
+                        "document_a": a["document"],
+                        "document_b": b["document"],
+                        "score_a": a["score"],
+                        "score_b": b["score"],
+                        "score_delta": (
+                            None if a["score"] is None or b["score"] is None else a["score"] - b["score"]
+                        ),
+                        "chunk_distance": distance,
+                    }
+                )
+
+    return {
+        "results_a": results_a,
+        "results_b": results_b,
+        "comparison": {
+            "file_overlap": len(shared_files),
+            "file_total": len(files_a | files_b),
+            "matches": matches,
+        },
+    }

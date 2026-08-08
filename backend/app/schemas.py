@@ -434,6 +434,42 @@ class SearchResponse(BaseModel):
     results: list[SearchResultItem]
 
 
+class CompareRequest(BaseModel):
+    # Same collection_ids/tag resolution as SearchRequest — two independent
+    # queries run against the same candidate collections, then diffed.
+    collection_ids: list[str] = []
+    tag: str | None = None
+    query_a: str
+    query_b: str
+    k: int = 10
+
+
+class CompareMatchItem(BaseModel):
+    file_id: str
+    filename: str | None = None
+    document_a: str
+    document_b: str
+    score_a: float | None = None
+    score_b: float | None = None
+    score_delta: float | None = None
+    # 0 = the literal same chunk; otherwise how many chunk-widths apart the
+    # two retrieved chunks are within that file's real chunking; None if
+    # either couldn't be located (see app/retrieval_router.py).
+    chunk_distance: int | None = None
+
+
+class CompareSummary(BaseModel):
+    file_overlap: int
+    file_total: int
+    matches: list[CompareMatchItem]
+
+
+class CompareResponse(BaseModel):
+    results_a: list[SearchResultItem]
+    results_b: list[SearchResultItem]
+    comparison: CompareSummary
+
+
 class AskJointLogItem(BaseModel):
     id: str
     created_at: str

@@ -200,6 +200,17 @@ export function searchByTag(tag, query, k = 10) {
   });
 }
 
+// Runs two searches and diffs them — for checking retrieval stability
+// across paraphrases/translations/reordered wording of "the same"
+// question. See backend/app/routers/ask.py's /compare endpoint.
+export function compareByTag(tag, queryA, queryB, k = 10) {
+  return request("/api/ask/compare", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tag, query_a: queryA, query_b: queryB, k }),
+  });
+}
+
 export function updateCollectionTags(knowledgeId, tags) {
   return request(`/api/kb/${knowledgeId}/tags`, {
     method: "PATCH",

@@ -4,8 +4,9 @@ import pytest
 import respx
 from httpx import Response
 
+from app.chunking.preview import ChunkRange
 from app.owui_client import OwuiClient, OwuiError
-from app.retrieval_router import ask_joint, ask_with_routing, search_collections
+from app.retrieval_router import ask_joint, ask_with_routing, compare_searches, search_collections
 
 # Mirrors the real shape Open WebUI returns for a `files`-augmented chat
 # completion (confirmed live): the usual OpenAI fields plus a `sources`
@@ -170,3 +171,109 @@ async def test_search_collections_surfaces_owui_errors():
 
     with pytest.raises(OwuiError):
         await search_collections(client, ["kb-a"], "some question")
+
+
+@respx.mock
+async def test_compare_searches_treats_identical_chunk_text_as_zero_distance():
+    respx.post("http://fake-owui.test/api/v1/retrieval/query/collection").mock(
+        side_effect=[
+            Response(
+                200,
+                json={
+                    "documents": [["shared chunk text"]],
+                    "distances": [[0.9]],
+                    "metadatas": [[{"file_id": "file-1", "name": "doc.pdf"}]],
+                },
+            ),
+            Response(
+                200,
+                json={
+                    "documents": [["shared chunk text"]],
+                    "distances": [[0.6]],
+                    "metadatas": [[{"file_id": "file-1", "name": "doc.pdf"}]],
+                },
+            ),
+        ]
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+
+    result = await compare_searches(client, ["kb-a"], "query A", "query B")
+
+    assert result["comparison"]["file_overlap"] == 1
+    assert result["comparison"]["file_total"] == 1
+    assert len(result["comparison"]["matches"]) == 1
+    match = result["comparison"]["matches"][0]
+    assert match["chunk_distance"] == 0
+    assert match["score_a"] == 0.9
+    assert match["score_b"] == 0.6
+    assert match["score_delta"] == pytest.approx(0.3)
+
+
+@respx.mock
+async def test_compare_searches_computes_chunk_distance_for_non_identical_chunks_in_the_same_file(monkeypatch):
+    """Two different (but from the same file) retrieved chunks aren't just
+    "same file or not" — this measures how many chunk-widths apart they
+    really are, using that file's real chunking (see
+    app/chunking/preview.py). compute_chunk_preview itself is monkeypatched
+    to a known, controlled set of ranges so this test verifies the
+    distance/pairing logic, not langchain's actual splitter behavior
+    (already covered by the chunking module's own tests)."""
+    respx.post("http://fake-owui.test/api/v1/retrieval/query/collection").mock(
+        side_effect=[
+            Response(
+                200,
+                json={"documents": [["AAA"]], "distances": [[0.9]], "metadatas": [[{"file_id": "file-1", "name": "doc.pdf"}]]},
+            ),
+            Response(
+                200,
+                json={"documents": [["CCC"]], "distances": [[0.5]], "metadatas": [[{"file_id": "file-1", "name": "doc.pdf"}]]},
+            ),
+        ]
+    )
+    respx.get("http://fake-owui.test/api/v1/files/file-1/data/content").mock(
+        return_value=Response(200, json={"content": "AAABBBCCC"})
+    )
+    respx.get("http://fake-owui.test/api/v1/retrieval/config").mock(
+        return_value=Response(200, json={"CHUNK_SIZE": 3, "CHUNK_OVERLAP": 0})
+    )
+    monkeypatch.setattr(
+        "app.retrieval_router.compute_chunk_preview",
+        lambda text, config: [ChunkRange(0, 3), ChunkRange(3, 6), ChunkRange(6, 9)],
+    )
+
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+    result = await compare_searches(client, ["kb-a"], "query A", "query B")
+
+    assert len(result["comparison"]["matches"]) == 1
+    match = result["comparison"]["matches"][0]
+    assert match["document_a"] == "AAA"
+    assert match["document_b"] == "CCC"
+    assert match["chunk_distance"] == 2  # chunk index 0 vs chunk index 2
+
+
+@respx.mock
+async def test_compare_searches_reports_no_matches_when_no_files_overlap():
+    respx.post("http://fake-owui.test/api/v1/retrieval/query/collection").mock(
+        side_effect=[
+            Response(200, json={"documents": [["a"]], "distances": [[0.9]], "metadatas": [[{"file_id": "file-1", "name": "a.md"}]]}),
+            Response(200, json={"documents": [["b"]], "distances": [[0.5]], "metadatas": [[{"file_id": "file-2", "name": "b.md"}]]}),
+        ]
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+
+    result = await compare_searches(client, ["kb-a"], "query A", "query B")
+
+    assert result["comparison"]["file_overlap"] == 0
+    assert result["comparison"]["file_total"] == 2
+    assert result["comparison"]["matches"] == []
+
+
+@respx.mock
+async def test_compare_searches_surfaces_owui_errors():
+    respx.post("http://fake-owui.test/api/v1/retrieval/query/collection").mock(
+        return_value=Response(401, json={"detail": "Unauthorized"})
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+
+    with pytest.raises(OwuiError):
+        await compare_searches(client, ["kb-a"], "query A", "query B")
