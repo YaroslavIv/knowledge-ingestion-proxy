@@ -273,6 +273,30 @@ async def test_query_collection_surfaces_owui_errors():
 
 
 @respx.mock
+async def test_embed_text_returns_the_vector():
+    route = respx.post("http://fake-owui.test/api/v1/embeddings").mock(
+        return_value=Response(
+            200,
+            json={"data": [{"embedding": [0.1, 0.2, 0.3], "index": 0}], "model": "qwen3-embedding:0.6b"},
+        )
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+    embedding = await client.embed_text("qwen3-embedding:0.6b", "some question")
+    assert embedding == [0.1, 0.2, 0.3]
+    assert json.loads(route.calls[0].request.content) == {"model": "qwen3-embedding:0.6b", "input": "some question"}
+
+
+@respx.mock
+async def test_embed_text_surfaces_owui_errors():
+    respx.post("http://fake-owui.test/api/v1/embeddings").mock(
+        return_value=Response(400, json={"detail": "Model not found"})
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+    with pytest.raises(OwuiError):
+        await client.embed_text("bad-model", "some question")
+
+
+@respx.mock
 async def test_upload_file_to_knowledge_explicitly_links_the_file():
     """Confirmed live against a real corporate Open WebUI instance: uploading
     with metadata.knowledge_id alone left the file in its own isolated

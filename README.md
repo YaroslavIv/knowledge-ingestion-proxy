@@ -75,6 +75,34 @@ Run the pure-logic unit tests (redaction offset math):
 npx vitest run
 ```
 
+### Building for production behind a reverse proxy at a sub-path
+
+If this proxy is served under a path prefix (e.g. Caddy/nginx exposing it at `https://host/proxy/` rather than at
+the domain root), the production build needs **both** of these set to that same prefix, or the built JS silently
+falls back to calling `http://localhost:8123` directly — which only ever works if you happen to open the page on
+the very machine running the backend, and fails ("Failed to fetch") for literally everyone else:
+
+```powershell
+# PowerShell
+$env:VITE_PROXY_API_BASE_URL = "/proxy"
+npm run build -- --base=/proxy/
+```
+
+```bash
+# bash
+VITE_PROXY_API_BASE_URL=/proxy npm run build -- --base=/proxy/
+```
+
+- `--base=/proxy/` (a Vite build flag) makes `index.html` reference its own JS/CSS under `/proxy/assets/...` instead
+  of `/assets/...`, so they resolve correctly once the reverse proxy strips the `/proxy` prefix before serving them.
+- `VITE_PROXY_API_BASE_URL=/proxy` makes every `fetch()` call in the app target `/proxy/api/...` (same-origin,
+  relative) instead of the `http://localhost:8123` dev default — matching whatever path your reverse proxy forwards
+  to the backend (e.g. a Caddy `handle /proxy/api/* { uri strip_prefix /proxy; reverse_proxy 127.0.0.1:8123 }`
+  block).
+
+Both values must match the actual prefix your reverse proxy strips — if it's serving at `/kb/` instead, use `/kb`
+for both.
+
 ## Status
 
 - **Milestone 1 — parse, edit, submit**: done.

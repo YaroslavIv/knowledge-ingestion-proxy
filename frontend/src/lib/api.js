@@ -189,6 +189,17 @@ export function getLatestCollectionsByTag(tag) {
   return request(`/api/tags/${encodeURIComponent(tag)}/collections`);
 }
 
+// Pure retrieval, no chat completion — see backend/app/routers/ask.py's
+// /search endpoint. Built for judging embedding-model quality directly:
+// the real top-k matches for a query, with their relevance scores.
+export function searchByTag(tag, query, k = 10) {
+  return request("/api/ask/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tag, query, k }),
+  });
+}
+
 export function updateCollectionTags(knowledgeId, tags) {
   return request(`/api/kb/${knowledgeId}/tags`, {
     method: "PATCH",

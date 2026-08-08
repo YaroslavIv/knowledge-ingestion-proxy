@@ -148,6 +148,33 @@ class OriginalFileBlob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class AskJointLog(Base):
+    """One successful `/api/ask/joint` call — the running history of what's
+    actually been asked against these collections, kept so it can be
+    analyzed later (spotting content gaps, judging whether the right
+    context keeps coming back for real user questions). Not logged on
+    failure: a question that never got a real answer isn't useful history
+    yet — see routers/ask.py.
+    """
+
+    __tablename__ = "ask_joint_log"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    query: Mapped[str] = mapped_column(Text)
+    tag: Mapped[str | None] = mapped_column(String, nullable=True)
+    collection_ids: Mapped[list] = mapped_column(JSON, default=list)
+    model: Mapped[str] = mapped_column(String)
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The query's own embedding vector (same model/engine the RAG pipeline
+    # itself uses — see OwuiClient.embed_text), stored purely so this table
+    # can later be searched/clustered/classified by semantic similarity
+    # instead of just keyword-matched on `query` text. Best-effort: None if
+    # the embedding call failed — that must never block logging the
+    # question itself.
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+
 class TagDictionary(Base):
     """Every freeform tag name ever used, kept around after removal from any
     one file so it still shows up as a suggestion later (the point of a

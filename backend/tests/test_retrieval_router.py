@@ -5,7 +5,7 @@ import respx
 from httpx import Response
 
 from app.owui_client import OwuiClient, OwuiError
-from app.retrieval_router import ask_joint, ask_with_routing
+from app.retrieval_router import ask_joint, ask_with_routing, search_collections
 
 # Mirrors the real shape Open WebUI returns for a `files`-augmented chat
 # completion (confirmed live): the usual OpenAI fields plus a `sources`
@@ -118,3 +118,55 @@ async def test_ask_joint_queries_every_collection_in_one_chat_completion_call():
     # no scoring call — joint mode never touches /query/collection (respx
     # would raise AllMockedAssertionError if it tried, since only
     # /chat/completions is mocked in this test)
+
+
+@respx.mock
+async def test_search_collections_returns_pooled_results_with_scores_and_filenames():
+    query_route = respx.post("http://fake-owui.test/api/v1/retrieval/query/collection").mock(
+        return_value=Response(
+            200,
+            json={
+                "documents": [["best chunk", "second chunk"]],
+                "distances": [[0.91, 0.42]],
+                "metadatas": [[{"file_id": "file-1", "name": "doc-a.pdf"}, {"file_id": "file-2", "name": "doc-b.md"}]],
+            },
+        )
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+
+    results = await search_collections(client, ["kb-a", "kb-b"], "some question", k=5)
+
+    assert results == [
+        {"document": "best chunk", "score": 0.91, "file_id": "file-1", "filename": "doc-a.pdf"},
+        {"document": "second chunk", "score": 0.42, "file_id": "file-2", "filename": "doc-b.md"},
+    ]
+    sent_body = json.loads(query_route.calls[0].request.content)
+    assert sent_body["collection_names"] == ["kb-a", "kb-b"]
+    assert sent_body["query"] == "some question"
+    assert sent_body["k"] == 5
+    # no chat-completion call at all — pure retrieval, no generation
+    # (respx would raise AllMockedAssertionError if one were attempted,
+    # since only /query/collection is mocked in this test)
+
+
+@respx.mock
+async def test_search_collections_returns_empty_list_when_nothing_matches():
+    respx.post("http://fake-owui.test/api/v1/retrieval/query/collection").mock(
+        return_value=Response(200, json={"documents": [[]], "distances": [[]], "metadatas": [[]]})
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+
+    results = await search_collections(client, ["kb-a"], "some question")
+
+    assert results == []
+
+
+@respx.mock
+async def test_search_collections_surfaces_owui_errors():
+    respx.post("http://fake-owui.test/api/v1/retrieval/query/collection").mock(
+        return_value=Response(401, json={"detail": "Unauthorized"})
+    )
+    client = OwuiClient(base_url="http://fake-owui.test", api_key="testkey")
+
+    with pytest.raises(OwuiError):
+        await search_collections(client, ["kb-a"], "some question")

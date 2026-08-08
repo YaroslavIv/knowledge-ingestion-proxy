@@ -205,6 +205,24 @@ class OwuiClient:
             self._raise_for_status(resp)
             return resp.json()
 
+    async def embed_text(self, model: str, text: str) -> list[float]:
+        """Raw embedding vector for a piece of text, via Open WebUI's own
+        OpenAI-compatible `/api/v1/embeddings` endpoint. Passing the
+        currently configured RAG_EMBEDDING_MODEL (see get_embedding_config)
+        here reproduces the same vector its own retrieval pipeline would
+        compute for this text — used to store a query's embedding for later
+        clustering/classification (see app/ask_history.py), not part of the
+        actual retrieval path itself.
+        """
+        async with httpx.AsyncClient(base_url=self._base_url, timeout=30) as client:
+            resp = await client.post(
+                "/api/v1/embeddings",
+                headers=self._headers(),
+                json={"model": model, "input": text},
+            )
+            self._raise_for_status(resp)
+            return resp.json()["data"][0]["embedding"]
+
     async def list_models(self) -> list[dict]:
         async with httpx.AsyncClient(base_url=self._base_url, timeout=30) as client:
             resp = await client.get("/api/v1/models", headers=self._headers())

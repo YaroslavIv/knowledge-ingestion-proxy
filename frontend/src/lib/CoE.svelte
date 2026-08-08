@@ -1,5 +1,5 @@
 <script>
-  import { getLatestCollectionsByTag, listKnowledgeBases, updateCollectionTags } from "./api.js";
+  import { getLatestCollectionsByTag, listKnowledgeBases, searchByTag, updateCollectionTags } from "./api.js";
 
   // Hardcoded on purpose — this is a dedicated tab for the one tag the team
   // actually uses to mean "in active use", not a general tag browser.
@@ -70,7 +70,42 @@
       addBusy = false;
     }
   }
+
+  // --- search (pure retrieval, no generation) ---
+  // For judging embedding-model quality directly: are the real top matches
+  // for a query actually relevant, without an LLM's phrasing smoothing over
+  // mediocre retrieval either way.
+  let searchQuery = $state("");
+  let searching = $state(false);
+  let searchError = $state(null);
+  let searchResults = $state(null); // null = no search run yet
+
+  async function handleSearch() {
+    const query = searchQuery.trim();
+    if (!query) return;
+    searching = true;
+    searchError = null;
+    try {
+      const resp = await searchByTag(TAG, query);
+      searchResults = resp.results;
+    } catch (e) {
+      searchError = e.message;
+    } finally {
+      searching = false;
+    }
+  }
+
+  function formatScore(score) {
+    return score === null || score === undefined ? "—" : score.toFixed(3);
+  }
 </script>
+
+{#snippet spinner()}
+  <svg class="animate-spin size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V4a8 8 0 00-8 8h0z"></path>
+  </svg>
+{/snippet}
 
 <div class="flex flex-col gap-3">
   <div class="flex justify-between items-center px-1">
@@ -172,4 +207,54 @@
   </div>
 
   {#if error}<p class="text-red-500 text-sm">{error}</p>{/if}
+
+  <div class="flex flex-col gap-2 bg-white dark:bg-gray-900 rounded-3xl border border-gray-100/30 dark:border-gray-850/30 p-3">
+    <div class="flex flex-col gap-0.5 px-1">
+      <div class="text-sm font-medium">Search</div>
+      <div class="text-xs text-gray-500">
+        Retrieval only — no model, no generated answer. Shows the real top-matching chunks across every "{TAG}"
+        collection and their relevance scores, for judging embedding-model quality directly.
+      </div>
+    </div>
+    <div class="flex gap-2 px-1">
+      <input
+        class="flex-1 min-w-0 text-sm px-3 py-2 rounded-xl bg-gray-50 dark:bg-gray-850 outline-hidden"
+        placeholder="Type a query…"
+        bind:value={searchQuery}
+        disabled={searching}
+        onkeydown={(e) => {
+          if (e.key === "Enter") handleSearch();
+        }}
+      />
+      <button
+        type="button"
+        class="primary flex items-center gap-1.5 px-4 shrink-0"
+        disabled={searching || !searchQuery.trim()}
+        onclick={handleSearch}
+      >
+        {#if searching}{@render spinner()}{/if}
+        {searching ? "Searching…" : "Search"}
+      </button>
+    </div>
+
+    {#if searchError}<p class="text-red-500 text-sm px-1">{searchError}</p>{/if}
+
+    {#if searchResults !== null}
+      {#if searchResults.length === 0}
+        <div class="text-sm text-gray-500 px-1 py-2">No matching content found.</div>
+      {:else}
+        <div class="flex flex-col gap-1.5 px-1 max-h-[50vh] overflow-y-auto">
+          {#each searchResults as result, i (i)}
+            <div class="flex flex-col gap-1 rounded-xl border border-gray-100 dark:border-gray-850 p-2.5">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs font-medium truncate">{result.filename ?? "(unknown file)"}</span>
+                <span class="text-xs font-mono text-gray-500 shrink-0">score {formatScore(result.score)}</span>
+              </div>
+              <p class="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap line-clamp-4">{result.document}</p>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    {/if}
+  </div>
 </div>

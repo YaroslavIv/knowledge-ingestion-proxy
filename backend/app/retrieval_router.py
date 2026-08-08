@@ -80,3 +80,33 @@ async def ask_joint(
         files=[{"type": "collection", "id": cid} for cid in collection_ids],
         return_raw=True,
     )
+
+
+async def search_collections(client: OwuiClient, collection_ids: list[str], query: str, k: int = 10) -> list[dict]:
+    """Pure retrieval, no chat completion — the exact pooled/ranked chunks
+    ask_joint would hand to the LLM as `files`, surfaced directly instead.
+    Built for judging embedding-model quality on its own terms: whether the
+    real top-k matches for a query are actually relevant, without an LLM's
+    phrasing smoothing over mediocre retrieval either way.
+
+    Returns highest-score-first (same score semantics as ask_with_routing —
+    despite the field's name, higher is better), each as
+    `{document, score, file_id, filename}`.
+    """
+    result = await client.query_collection(collection_ids, query, k=k)
+    documents = (result.get("documents") or [[]])[0]
+    distances = (result.get("distances") or [[]])[0]
+    metadatas = (result.get("metadatas") or [[]])[0]
+
+    results = []
+    for i, document in enumerate(documents):
+        metadata = metadatas[i] if i < len(metadatas) else None
+        results.append(
+            {
+                "document": document,
+                "score": distances[i] if i < len(distances) else None,
+                "file_id": (metadata or {}).get("file_id"),
+                "filename": (metadata or {}).get("name"),
+            }
+        )
+    return results

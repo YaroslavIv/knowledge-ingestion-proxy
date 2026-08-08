@@ -412,3 +412,33 @@ class AskJointRequest(BaseModel):
     query: str
     model: str
     history: list[ChatMessage] = []
+
+
+class SearchRequest(BaseModel):
+    # Same collection_ids/tag resolution as AskJointRequest — deliberately
+    # no `model`/`history`: this is pure retrieval, no chat completion.
+    collection_ids: list[str] = []
+    tag: str | None = None
+    query: str
+    k: int = 10
+
+
+class SearchResultItem(BaseModel):
+    document: str
+    score: float | None = None
+    file_id: str | None = None
+    filename: str | None = None
+
+
+class SearchResponse(BaseModel):
+    results: list[SearchResultItem]
+
+
+class AskJointLogItem(BaseModel):
+    id: str
+    created_at: str
+    query: str
+    tag: str | None
+    collection_ids: list[str]
+    model: str
+    answer: str | None
