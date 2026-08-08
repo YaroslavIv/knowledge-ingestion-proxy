@@ -9,6 +9,7 @@ endpoints.
 """
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import zipfile
 from datetime import datetime, timezone
@@ -16,11 +17,56 @@ from pathlib import Path
 
 from app.config import settings
 
+# Stored inside every backup zip alongside the real content, purely so the
+# next run can tell whether anything actually changed since then — see
+# _content_hash/_latest_backup_hash.
+_HASH_ENTRY_NAME = "BACKUP_CONTENT_HASH.txt"
+
 
 def _backups_dir() -> Path:
     path = Path(settings.backups_dir)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _content_hash() -> str:
+    """A hash of everything create_backup would actually capture, used to
+    skip writing an identical daily backup. Deliberately NOT a hash of the
+    raw .db file bytes — SQLite's on-disk page layout can shift (vacuuming,
+    free-page reuse) with no real change to the data, which would make
+    every single day look "changed" even when nothing was. `iterdump()`
+    reflects only the logical row content, which is what actually matters
+    here.
+    """
+    conn = sqlite3.connect(settings.db_path)
+    try:
+        dump = "\n".join(conn.iterdump())
+    finally:
+        conn.close()
+
+    parts = [hashlib.sha256(dump.encode("utf-8")).hexdigest()]
+    for label, dir_path in (
+        ("originals", Path(settings.originals_dir)),
+        ("course_outputs", Path(settings.course_outputs_dir)),
+    ):
+        if not dir_path.is_dir():
+            continue
+        for path in sorted(p for p in dir_path.rglob("*") if p.is_file()):
+            rel = path.relative_to(dir_path)
+            parts.append(f"{label}/{rel}:{hashlib.sha256(path.read_bytes()).hexdigest()}")
+
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+def _latest_backup_hash(backups_dir: Path) -> str | None:
+    existing = sorted(backups_dir.glob("backup_*.zip"), reverse=True)
+    if not existing:
+        return None
+    try:
+        with zipfile.ZipFile(existing[0]) as zf:
+            return zf.read(_HASH_ENTRY_NAME).decode("utf-8")
+    except (KeyError, zipfile.BadZipFile, OSError):
+        return None
 
 
 def _snapshot_sqlite_db(dest_path: Path) -> None:
@@ -47,15 +93,28 @@ def _add_dir_to_zip(zf: zipfile.ZipFile, source_dir: Path, arc_prefix: str) -> N
             zf.write(path, arcname=f"{arc_prefix}/{path.relative_to(source_dir)}")
 
 
-def create_backup() -> Path:
+def create_backup(*, force: bool = False) -> Path | None:
     """Builds one zip with a timestamped name and prunes backups older
     than backup_retention_days. Runs entirely synchronously (SQLite backup
     + filesystem I/O) — callers on the async side must offload this to a
     thread (see routers/backups.py); the daily scheduler job in main.py
     runs it directly since APScheduler already executes plain functions in
     its own worker thread.
+
+    force=False (the default, used by the daily scheduled job) skips
+    writing a new zip — returning None — when nothing has actually changed
+    since the most recent backup, so routine daily runs don't pile up
+    identical copies. force=True (the manual "Back up now" button) always
+    writes one: an explicit request for a fresh safety net shouldn't be
+    silently turned into a no-op just because nothing changed since
+    yesterday.
     """
     backups_dir = _backups_dir()
+    content_hash = _content_hash()
+    if not force and _latest_backup_hash(backups_dir) == content_hash:
+        _prune_old_backups(backups_dir)
+        return None
+
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     zip_path = backups_dir / f"backup_{timestamp}.zip"
     db_snapshot_path = backups_dir / f".tmp_db_snapshot_{timestamp}.db"
@@ -66,6 +125,7 @@ def create_backup() -> Path:
             zf.write(db_snapshot_path, arcname="ingestion_proxy.db")
             _add_dir_to_zip(zf, Path(settings.originals_dir), "originals")
             _add_dir_to_zip(zf, Path(settings.course_outputs_dir), "course_outputs")
+            zf.writestr(_HASH_ENTRY_NAME, content_hash)
     finally:
         db_snapshot_path.unlink(missing_ok=True)
 
@@ -106,3 +166,13 @@ def get_backup_path(filename: str) -> Path | None:
         return None
     path = _backups_dir() / filename
     return path if path.is_file() else None
+
+
+def delete_backup(filename: str) -> bool:
+    """Removes one backup zip. Reuses get_backup_path's own name validation
+    so this can't be tricked into deleting anything outside backups_dir."""
+    path = get_backup_path(filename)
+    if path is None:
+        return False
+    path.unlink()
+    return True

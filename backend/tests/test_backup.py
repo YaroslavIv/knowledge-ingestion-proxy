@@ -2,7 +2,7 @@ import sqlite3
 import time
 import zipfile
 
-from app.backup import create_backup, get_backup_path, list_backups
+from app.backup import create_backup, delete_backup, get_backup_path, list_backups
 from app.config import settings
 
 
@@ -62,9 +62,12 @@ async def test_create_backup_snapshot_reflects_real_db_rows(client):
 
 
 async def test_list_backups_reports_newest_first(client):
-    first = create_backup()
+    # force=True: this test is only about list ordering, not the
+    # skip-when-unchanged behavior (covered separately below) — without it,
+    # the second call would be a legitimate no-op since nothing changed.
+    first = create_backup(force=True)
     time.sleep(1.01)  # backup filenames/mtimes are second-resolution
-    second = create_backup()
+    second = create_backup(force=True)
 
     backups = list_backups()
     filenames = [b["filename"] for b in backups]
@@ -90,6 +93,50 @@ async def test_prune_removes_backups_older_than_retention(client, monkeypatch):
     assert not old_path.exists()
 
 
+async def test_unforced_backup_is_skipped_when_nothing_changed(client):
+    from pathlib import Path
+
+    first = create_backup()
+    assert first is not None
+
+    second = create_backup()  # force=False (the default) — nothing changed
+    assert second is None
+    assert len(list(Path(settings.backups_dir).glob("backup_*.zip"))) == 1
+
+
+async def test_unforced_backup_runs_again_once_content_actually_changes(client):
+    from pathlib import Path
+
+    first = create_backup()
+    assert first is not None
+
+    time.sleep(1.01)  # backup filenames/mtimes are second-resolution
+    _write_file(Path(settings.originals_dir) / "doc-2" / "new.pdf", b"new bytes")
+    second = create_backup()
+    assert second is not None
+    assert second != first
+
+
+async def test_forced_backup_always_runs_even_when_unchanged(client):
+    first = create_backup()
+    assert first is not None
+    time.sleep(1.01)  # backup filenames/mtimes are second-resolution
+    second = create_backup(force=True)
+    assert second is not None
+    assert second != first
+
+
+async def test_delete_backup_removes_the_file(client):
+    zip_path = create_backup(force=True)
+    assert delete_backup(zip_path.name) is True
+    assert not zip_path.exists()
+
+
+def test_delete_backup_rejects_non_backup_filenames():
+    assert delete_backup("../../etc/passwd") is False
+    assert delete_backup("not-a-backup.zip") is False
+
+
 async def test_backups_api_list_trigger_and_download(client):
     create_resp = await client.post("/api/backups")
     assert create_resp.status_code == 200
@@ -104,6 +151,24 @@ async def test_backups_api_list_trigger_and_download(client):
     download_resp = await client.get(f"/api/backups/{created['filename']}/download")
     assert download_resp.status_code == 200
     assert download_resp.headers["content-type"] == "application/zip"
+
+
+async def test_delete_backup_endpoint_removes_it_and_404s_afterward(client):
+    created = (await client.post("/api/backups")).json()
+
+    delete_resp = await client.delete(f"/api/backups/{created['filename']}")
+    assert delete_resp.status_code == 204
+
+    list_resp = await client.get("/api/backups")
+    assert all(b["filename"] != created["filename"] for b in list_resp.json())
+
+    second_delete_resp = await client.delete(f"/api/backups/{created['filename']}")
+    assert second_delete_resp.status_code == 404
+
+
+async def test_delete_backup_endpoint_rejects_path_traversal(client):
+    resp = await client.delete("/api/backups/../../etc/passwd")
+    assert resp.status_code in (404, 422)
 
 
 async def test_download_rejects_path_traversal(client):

@@ -238,6 +238,10 @@ export function triggerBackup() {
   return request("/api/backups", { method: "POST" });
 }
 
+export function deleteBackup(filename) {
+  return request(`/api/backups/${encodeURIComponent(filename)}`, { method: "DELETE" });
+}
+
 export function getBackupDownloadUrl(filename) {
   return `${BASE_URL}/api/backups/${encodeURIComponent(filename)}/download`;
 }

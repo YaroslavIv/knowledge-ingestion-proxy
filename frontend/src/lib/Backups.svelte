@@ -1,9 +1,10 @@
 <script>
-  import { authHeaders, getBackupDownloadUrl, listBackups, triggerBackup } from "./api.js";
+  import { authHeaders, deleteBackup, getBackupDownloadUrl, listBackups, triggerBackup } from "./api.js";
 
   let backups = $state(null); // null while loading
   let error = $state(null);
   let creating = $state(false);
+  let deletingFilename = $state(null);
 
   async function load() {
     error = null;
@@ -43,6 +44,20 @@
       setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
     } catch (e) {
       error = e.message;
+    }
+  }
+
+  async function handleDelete(backup) {
+    if (!confirm(`Delete backup "${backup.filename}"? This cannot be undone.`)) return;
+    deletingFilename = backup.filename;
+    error = null;
+    try {
+      await deleteBackup(backup.filename);
+      backups = backups.filter((b) => b.filename !== backup.filename);
+    } catch (e) {
+      error = e.message;
+    } finally {
+      deletingFilename = null;
     }
   }
 
@@ -119,6 +134,14 @@
               onclick={() => handleDownload(backup)}
             >
               Download
+            </button>
+            <button
+              type="button"
+              class="text-xs px-2.5 py-1 rounded-full border border-gray-200 dark:border-gray-800 hover:bg-red-50 hover:text-red-600 hover:border-red-200 dark:hover:bg-red-500/10 dark:hover:text-red-400 dark:hover:border-red-500/30 transition shrink-0 disabled:opacity-40"
+              disabled={deletingFilename === backup.filename}
+              onclick={() => handleDelete(backup)}
+            >
+              {deletingFilename === backup.filename ? "Deleting…" : "Delete"}
             </button>
           </div>
         {/each}
